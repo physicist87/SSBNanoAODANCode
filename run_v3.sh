@@ -1,9 +1,7 @@
 #!/bin/bash
 
 # === [CONFIGURATION] ===
-runPeriod="UL2017"
 runPeriod="UL2018"
-runPeriod="UL2016PreVFP"
 StudyName="Testv1"
 Channels="MuMu"
 

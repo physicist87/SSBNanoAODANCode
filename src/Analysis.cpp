@@ -613,8 +613,8 @@ void Analysis::SetObjectVariable() {
     /*std::cout << "Setup B-tagging: " << JetbTag << " for period " << RunPeriod 
               << " with cut value " << bdisccut << std::endl;*/
     /// MET ///
-    met_pt  = floatSingles["MET_pt"].get(); 
-    met_phi  = floatSingles["MET_phi"].get();
+    met_pt  = floatSingles["PuppiMET_pt"].get(); 
+    met_phi  = floatSingles["PuppiMET_phi"].get();
     object_variables_set_ = true; 
 //    std::cout << " met_pt : " << met_pt << std::endl; 
 //    std::cout << " met_phi : " << met_phi << std::endl; 
@@ -1617,8 +1617,8 @@ void Analysis::MakeJetCollection() {
     }
 
     double rho = (floatSingles.count("fixedGridRhoFastjetAll") > 0) ? **floatSingles["fixedGridRhoFastjetAll"] : 0.0;
-    double raw_met_pt = (floatSingles.count("MET_pt") > 0)  ? **floatSingles["MET_pt"]  : 0.0;
-    double raw_met_phi = (floatSingles.count("MET_phi") > 0) ? **floatSingles["MET_phi"] : 0.0;
+    double raw_met_pt = (floatSingles.count("PuppiMET_pt") > 0)  ? **floatSingles["PuppiMET_pt"]  : 0.0;
+    double raw_met_phi = (floatSingles.count("PuppiMET_phi") > 0) ? **floatSingles["PuppiMET_phi"] : 0.0;
 
     JetCorrectionOutput corr_output = SSBCorr->ApplyJetCorrectionsWithMET(
         rawJets,

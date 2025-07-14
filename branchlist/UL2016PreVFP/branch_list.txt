@@ -95,8 +95,8 @@ Electron_mvaFall17V2noIso_WP90, electron, Bool_t, vector
 Electron_pfRelIso03_all, electron, Float_t, vector
 Electron_mvaFall17V2Iso, electron, Float_t, vector
 nElectron, electron, UInt_t, single
-MET_pt, met, Float_t, single
-MET_phi, met, Float_t, single
+PuppiMET_pt, met, Float_t, single
+PuppiMET_phi, met, Float_t, single
 Flag_HBHENoiseFilter, metfilter, Bool_t, single
 Flag_HBHENoiseIsoFilter, metfilter, Bool_t, single
 Flag_CSCTightHaloFilter, metfilter, Bool_t, single
