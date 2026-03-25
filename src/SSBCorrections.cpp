@@ -204,7 +204,9 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
 
     InitBtagSFCorrection(jsonDir + btag_sf_json, btag_tagger);
     if (!is_data) {
-        LoadMCBtagEfficiencies(btag_eff_path, btag_algo);
+        //LoadMCBtagEfficiencies(btag_eff_path, btag_algo);
+        LoadMCBtagEfficiencies(btag_eff_path, btag_algo, btag_wp);
+
     }
 
 
@@ -925,7 +927,9 @@ float SSBCorrections::ComputeBTagEventWeight(const std::vector<float>& pts,
 }
 
 
-void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo) {
+void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath,
+                                             const std::string& algo,
+                                             const std::string& wp) {
     TFile* f = TFile::Open(filepath.c_str(), "READ");
     if (!f || f->IsZombie()) {
         std::cerr << "[ERROR] Failed to open efficiency file: " << filepath << std::endl;
@@ -933,31 +937,24 @@ void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath, const s
     }
 
     for (const std::string& flav : {"b", "c", "l"}) {
-        for (const std::string& wp : {"Loose", "Medium", "Tight"}) {
-            std::string name = "eff_" + algo + "_" + flav + "_" + wp;
-            TH2D* hist = (TH2D*)f->Get(name.c_str());
-            if (hist) {
-                // Create a safe copy of the histogram
-                TH2D* hist_copy = (TH2D*)hist->Clone((name + "_copy").c_str());
-                hist_copy->SetDirectory(0); // Remove ROOT ownership
-                
-                // Delete existing histogram if present
-                auto it = eff_histograms_.find(algo + "_" + flav + "_" + wp);
-                if (it != eff_histograms_.end() && it->second) {
-                    delete it->second;
-                }
-                
-                eff_histograms_[algo + "_" + flav + "_" + wp] = hist_copy;
-                std::cout << "[INFO] Loaded and copied hist: " << name << std::endl;
-            } else {
-                std::cerr << "[WARNING] Histogram not found: " << name << std::endl;
+        std::string name = "eff_" + algo + "_" + flav + "_" + wp;
+        TH2D* hist = (TH2D*)f->Get(name.c_str());
+        if (hist) {
+            TH2D* hist_copy = (TH2D*)hist->Clone((name + "_copy").c_str());
+            hist_copy->SetDirectory(0);
+            auto it = eff_histograms_.find(algo + "_" + flav + "_" + wp);
+            if (it != eff_histograms_.end() && it->second) {
+                delete it->second;
             }
+            eff_histograms_[algo + "_" + flav + "_" + wp] = hist_copy;
+            std::cout << "[INFO] Loaded and copied hist: " << name << std::endl;
+        } else {
+            std::cerr << "[WARNING] Histogram not found: " << name << std::endl;
         }
     }
     f->Close();
-    delete f; // Explicitly delete file object
+    delete f;
 }
-
 
 /*
 void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo) {

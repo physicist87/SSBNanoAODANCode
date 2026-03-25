@@ -123,7 +123,8 @@ public:
     std::string GetJetVetoType() const;
     void InitBtagSFCorrection(const std::string& json_path, const std::string& tagger_name);
     float GetBtagSF(float pt, float eta, int flav, const std::string& wp, const std::string& syst = "nominal") const;
-    void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo);
+    //void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo);
+    void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo, const std::string& wp);
     float GetMCBtagEfficiency(float pt, float eta, int flav, const std::string& algo, const std::string& wp) const;
     float ComputeBTagEventWeight(const std::vector<float>& pts,
                              const std::vector<float>& etas,

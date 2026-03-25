@@ -17,7 +17,14 @@ CORR_ENV_LIBPATH ?= $(CORRECTION_LIBPATH)
 CORR_CVMFS_INCLUDE := /cvmfs/sft.cern.ch/lcg/releases/correctionlib/2.2.2-13853/x86_64-centos7-gcc11-opt/include
 CORR_CVMFS_LIBPATH := /cvmfs/sft.cern.ch/lcg/releases/correctionlib/2.2.2-13853/x86_64-centos7-gcc11-opt/lib
 
-BOOST_INCLUDE := /cvmfs/cms.cern.ch/el9_amd64_gcc12/external/boost/1.80.0-d43be26d8a1ca943bd8818c606afcd2b/include
+#BOOST_INCLUDE := /cvmfs/cms.cern.ch/el9_amd64_gcc12/external/boost/1.80.0-d43be26d8a1ca943bd8818c606afcd2b/include
+# Boost include: cvmfs > MacPorts fallback
+BOOST_CVMFS_INCLUDE := /cvmfs/cms.cern.ch/el9_amd64_gcc12/external/boost/1.80.0-d43be26d8a1ca943bd8818c606afcd2b/include
+ifneq ($(wildcard $(BOOST_CVMFS_INCLUDE)/boost/math/special_functions/erf.hpp),)
+  BOOST_INCLUDE := $(BOOST_CVMFS_INCLUDE)
+else
+  BOOST_INCLUDE := /opt/local/libexec/boost/1.76/include
+endif
 
 ifeq ($(wildcard $(CORR_ENV_INCLUDE)/correction.h),)
   ifeq ($(wildcard $(CORR_CVMFS_INCLUDE)/correction.h),)
