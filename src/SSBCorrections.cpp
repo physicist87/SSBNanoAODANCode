@@ -193,13 +193,20 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
 
     std::string btag_sf_json = "BTV/" + year_ + "_UL/btagging.json.gz";
     std::string btag_tagger = (btag_algo == "DeepJet") ? "deepJet_comb" : "deepCSV_comb";
-    //std::string btag_eff_path = "CorrectionFiles/BTag/UL" + year_ + "/btagEff_" + btag_algo + ".root";
-    std::string btag_eff_path = "CorrectionFiles/BTag/UL" + RunPeriod + "/btagEff_" + btag_algo + ".root";
-    std::cout << "btag_eff_path : " << btag_eff_path << std::endl;
+    std::string btag_eff_path = "";
+    if (!is_data) {
+        std::string process_subdir = GetProcessSubDir(inputfileName);
+        btag_eff_path = "CorrectionFiles/BTag/UL" + RunPeriod
+                      + "/" + process_subdir
+                      + "/btagEff_" + btag_algo + ".root";
+        std::cout << "[INFO] btag_eff_path: " << btag_eff_path << std::endl;
+    }
 
     InitBtagSFCorrection(jsonDir + btag_sf_json, btag_tagger);
-    //LoadMCBtagEfficiencies(btag_eff_root, btag_algo);
-    LoadMCBtagEfficiencies(btag_eff_path, btag_algo);
+    if (!is_data) {
+        LoadMCBtagEfficiencies(btag_eff_path, btag_algo);
+    }
+
 
     // Load muon SF
     //auto muon_set = CorrectionSet::from_file(jsonDir+muon_path);
@@ -440,11 +447,6 @@ double SSBCorrections::DoubleMuon_IDIsoEff(TLorentzVector lep1, TLorentzVector l
 */
     return mu1id * mu2id * mu1iso * mu2iso * mu1trk * mu2trk;
 }
-
-// Add this function to SSBCorrections.cpp
-
-
-// Add this function to SSBCorrections.cpp
 
 double SSBCorrections::DoubleElec_Eff(
     const TLorentzVector& lep1, const TLorentzVector& lep2,
@@ -1219,4 +1221,34 @@ std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, cons
 }
 std::string SSBCorrections::GetJetVetoType() const {
 	return jveto_type_; 
+}
+
+std::string SSBCorrections::GetProcessSubDir(const std::string& inputfileName) const {
+    // DY madgraph (must check before plain DY)
+    if (inputfileName.find("DYJetsToLL") != std::string::npos) {
+        if (inputfileName.find("madgraph") != std::string::npos) {
+            if (year_ == "2018") return "DY_madgraph";
+            else                 return "DY";
+        }
+        return "DY";
+    }
+    // WJets -> use DY efficiency
+    if (inputfileName.find("WJetsToLNu") != std::string::npos) return "DY";
+    // TTbar
+    if (inputfileName.find("TTbar_Signal") != std::string::npos) return "TTbar_Signal";
+    if (inputfileName.find("TTbar_")       != std::string::npos) return "TTbarOther";
+    if (inputfileName.find("TTJets_")      != std::string::npos) return "TTbarOther";
+    // SingleTop
+    if (inputfileName.find("ST_") != std::string::npos) return "SingleTop";
+    // Diboson
+    if (inputfileName.find("WW") != std::string::npos ||
+        inputfileName.find("WZ") != std::string::npos ||
+        inputfileName.find("ZZ") != std::string::npos) return "Diboson";
+    // TTV
+    if (inputfileName.find("TTW") != std::string::npos ||
+        inputfileName.find("TTZ") != std::string::npos) return "TTV";
+
+    std::cerr << "[WARNING] GetProcessSubDir: no match for '" << inputfileName
+              << "', falling back to TTbar_Signal" << std::endl;
+    return "TTbar_Signal";
 }

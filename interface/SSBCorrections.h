@@ -167,6 +167,7 @@ private:
 
     // Helper function to get appropriate correction name
     std::string getBtagCorrectionName(int flavor) const;
+    std::string GetProcessSubDir(const std::string& inputfileName) const;
     
     // Primary cause of segmentation fault - TH2D pointers need manual cleanup
     std::map<std::string, TH2D*> eff_histograms_;
