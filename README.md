@@ -31,13 +31,13 @@ make -f Makefile_ssb
 ### Cloning the Repository
 To get started, clone the repository from GitHub and check out the required branch:
 ```sh
-git clone --branch Run2_ULSummer20_v6p2 https://github.com/physicist87/SSBNanoAODANCode.git
+git clone --branch Run2_ULSummer20_v6p3 https://github.com/physicist87/SSBNanoAODANCode.git
 cd SSBNanoAODANCode
 ```
 
 If this repository is forked to your account:
 ```sh
-git clone --branch Run2_ULSummer20_v6p2 https://github.com/<username>/SSBNanoAODANCode.git
+git clone --branch Run2_ULSummer20_v6p3 https://github.com/<username>/SSBNanoAODANCode.git
 cd SSBNanoAODANCode
 ```
 
