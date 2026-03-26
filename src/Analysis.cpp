@@ -2513,12 +2513,12 @@ bool Analysis::NumJetCut(std::vector<int> v_jets)
 bool Analysis::METCut(TLorentzVector met)        
 {           
    bool metcut = false;
-   if ( TString(Decaymode).Contains( "dimuon" ) || TString(Decaymode).Contains( "dielec" ) )
-   {        
+   //if ( TString(Decaymode).Contains( "dimuon" ) || TString(Decaymode).Contains( "dielec" ) )
+   //{        
       if (met.Pt() > 40) { metcut =true; }
-   }        
-   else if ( TString(Decaymode).Contains( "muel" ) ){ metcut =true; }
-   else {std::cerr << "METCut Error !!" << std::endl;}
+   //}        
+   //else if ( TString(Decaymode).Contains( "muel" ) ){ metcut =true; }
+   //else {std::cerr << "METCut Error !!" << std::endl;}
    return metcut;
 }
 
