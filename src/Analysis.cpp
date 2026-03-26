@@ -748,9 +748,10 @@ void Analysis::Loop() {
         FillHisto( h_Num_Jets[1]  , v_jet_idx.size(), evt_weight_ );
         //FillHisto( h_Num_bJets[1], nbtagged, evt_weight_ );
 
-        if (ZVetoCut() == false) {continue;}
+	// Step 2: no ZVetoCut for DY estimation
 
-        FillHisto( h_DiLepMass[2], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_DiLepMass[2],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_cf_DiLepMass[2], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
         FillHisto( h_Num_PV[2],     num_pv, evt_weight_ );
         FillHisto( h_Lep1pt[2] ,    (Lep1).Pt()  , evt_weight_ );
         FillHisto( h_Lep1eta[2],    (Lep1).Eta() , evt_weight_ );
@@ -760,164 +761,217 @@ void Analysis::Loop() {
         FillHisto( h_Lep2phi[2],    (Lep2).Phi() , evt_weight_ );
         FillHisto( h_METpt[2]   ,   Met.Pt()  , evt_weight_ );
         FillHisto( h_METphi[2]  ,   Met.Phi()  , evt_weight_ );
-        FillHisto( h_Num_Jets[2]  , v_jet_idx.size(), evt_weight_ );      
+        FillHisto( h_Num_Jets[2]  , v_jet_idx.size(), evt_weight_ );
+
+        FillHisto( h_NoMETCut_DiLepMass[2],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_cf_NoMETCut_DiLepMass[2], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_NoMETCut_Num_PV[2],     num_pv, evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1pt[2] ,    (Lep1).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1eta[2],    (Lep1).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1phi[2],    (Lep1).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2pt[2] ,    (Lep2).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2eta[2],    (Lep2).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2phi[2],    (Lep2).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_METpt[2]  ,    Met.Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_METphi[2] ,    Met.Phi()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Num_Jets[2]  , v_jet_idx.size(), evt_weight_ );
 
         if (NumJetCut(v_jet_idx) == false) {continue;}
 
-        FillHisto( h_DiLepMass[3], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_DiLepMass[3],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_cf_DiLepMass[3], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
         FillHisto( h_Num_PV[3],     num_pv, evt_weight_ );
-
         FillHisto( h_Lep1pt[3] ,    (Lep1).Pt()  , evt_weight_ );
         FillHisto( h_Lep1eta[3],    (Lep1).Eta() , evt_weight_ );
         FillHisto( h_Lep1phi[3],    (Lep1).Phi() , evt_weight_ );
         FillHisto( h_Lep2pt[3] ,    (Lep2).Pt()  , evt_weight_ );
         FillHisto( h_Lep2eta[3],    (Lep2).Eta() , evt_weight_ );
         FillHisto( h_Lep2phi[3],    (Lep2).Phi() , evt_weight_ );
-
-        //if ((Jet2).Pt() < 30.) printf("jet2pt %lf eta %lf \n",Jet2.Pt(), Jet2.Eta());//std::cout << "Wrong! " << Jet2.Pt() << std::endl;
         FillHisto( h_Jet1pt[3] ,    (Jet1).Pt()  , evt_weight_ );
         FillHisto( h_Jet1eta[3],    (Jet1).Eta() , evt_weight_ );
         FillHisto( h_Jet1phi[3],    (Jet1).Phi() , evt_weight_ );
         FillHisto( h_Jet2pt[3] ,    (Jet2).Pt()  , evt_weight_ );
         FillHisto( h_Jet2eta[3],    (Jet2).Eta() , evt_weight_ );
         FillHisto( h_Jet2phi[3],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[3]  , v_jet_idx.size(), evt_weight_ );      
-
+        FillHisto( h_Num_Jets[3]  , v_jet_idx.size(), evt_weight_ );
         FillHisto( h_METpt[3]   ,   Met.Pt()  , evt_weight_ );
         FillHisto( h_METphi[3]  ,   Met.Phi()  , evt_weight_ );
 
-        if (METCut(Met) == false) {continue;}
+        FillHisto( h_NoMETCut_DiLepMass[3],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_cf_NoMETCut_DiLepMass[3], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+        FillHisto( h_NoMETCut_Num_PV[3],     num_pv, evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1pt[3] ,    (Lep1).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1eta[3],    (Lep1).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep1phi[3],    (Lep1).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2pt[3] ,    (Lep2).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2eta[3],    (Lep2).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Lep2phi[3],    (Lep2).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet1pt[3] ,    (Jet1).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet1eta[3],    (Jet1).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet1phi[3],    (Jet1).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2pt[3] ,    (Jet2).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2eta[3],    (Jet2).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2phi[3],    (Jet2).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Num_Jets[3]  , v_jet_idx.size(), evt_weight_ );
+        FillHisto( h_NoMETCut_METpt[3]   ,   Met.Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_METphi[3]  ,   Met.Phi()  , evt_weight_ );
 
-        FillHisto( h_DiLepMass[4], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[4],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[4] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[4],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[4],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[4] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[4],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[4],    (Lep2).Phi() , evt_weight_ );
+        if (METCut(Met) == true) {
+            FillHisto( h_DiLepMass[4],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_cf_DiLepMass[4], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_Num_PV[4],     num_pv, evt_weight_ );
+            FillHisto( h_Lep1pt[4] ,    (Lep1).Pt()  , evt_weight_ );
+            FillHisto( h_Lep1eta[4],    (Lep1).Eta() , evt_weight_ );
+            FillHisto( h_Lep1phi[4],    (Lep1).Phi() , evt_weight_ );
+            FillHisto( h_Lep2pt[4] ,    (Lep2).Pt()  , evt_weight_ );
+            FillHisto( h_Lep2eta[4],    (Lep2).Eta() , evt_weight_ );
+            FillHisto( h_Lep2phi[4],    (Lep2).Phi() , evt_weight_ );
+            FillHisto( h_Jet1pt[4] ,    (Jet1).Pt()  , evt_weight_ );
+            FillHisto( h_Jet1eta[4],    (Jet1).Eta() , evt_weight_ );
+            FillHisto( h_Jet1phi[4],    (Jet1).Phi() , evt_weight_ );
+            FillHisto( h_Jet2pt[4] ,    (Jet2).Pt()  , evt_weight_ );
+            FillHisto( h_Jet2eta[4],    (Jet2).Eta() , evt_weight_ );
+            FillHisto( h_Jet2phi[4],    (Jet2).Phi() , evt_weight_ );
+            FillHisto( h_Num_Jets[4]  , v_jet_idx.size(), evt_weight_ );
+            FillHisto( h_METpt[4]   ,   Met.Pt()  , evt_weight_ );
+            FillHisto( h_METphi[4]  ,   Met.Phi()  , evt_weight_ );
 
-        FillHisto( h_Jet1pt[4] ,    (Jet1).Pt()  , evt_weight_ );
-        FillHisto( h_Jet1eta[4],    (Jet1).Eta() , evt_weight_ );
-        FillHisto( h_Jet1phi[4],    (Jet1).Phi() , evt_weight_ );
-        FillHisto( h_Jet2pt[4] ,    (Jet2).Pt()  , evt_weight_ );
-        FillHisto( h_Jet2eta[4],    (Jet2).Eta() , evt_weight_ );
-        FillHisto( h_Jet2phi[4],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[4]  , v_jet_idx.size(), evt_weight_ );      
+            BTaggingSFApply();
 
-        FillHisto( h_METpt[4]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[4]  ,   Met.Phi()  , evt_weight_ );
+            if (NumbJetCut(v_bjet_idx) == false) {continue;}
 
-        BTaggingSFApply();
-
-        if (NumbJetCut(v_bjet_idx) == false) {continue;}
-
-        FillHisto( h_DiLepMass[5], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[5],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[5] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[5],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[5],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[5] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[5],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[5],    (Lep2).Phi() , evt_weight_ );
-
-        FillHisto( h_Jet1pt[5] ,    (Jet1).Pt()  , evt_weight_ );
-        FillHisto( h_Jet1eta[5],    (Jet1).Eta() , evt_weight_ );
-        FillHisto( h_Jet1phi[5],    (Jet1).Phi() , evt_weight_ );
-        FillHisto( h_Jet2pt[5] ,    (Jet2).Pt()  , evt_weight_ );
-        FillHisto( h_Jet2eta[5],    (Jet2).Eta() , evt_weight_ );
-        FillHisto( h_Jet2phi[5],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[5]  , v_jet_idx.size(), evt_weight_ );      
-
-        FillHisto( h_METpt[5]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[5]  ,   Met.Phi()  , evt_weight_ );
-        SetUpKINObs();
-        if (isKinSol)
-        {
-            FillHisto( h_Lep1pt[8] , Lep1.Pt() , evt_weight_ );
-            FillHisto( h_Lep2pt[8] , Lep2.Pt() , evt_weight_ );
-            FillHisto( h_Lep1eta[8], Lep1.Eta(), evt_weight_ );
-            FillHisto( h_Lep2eta[8], Lep2.Eta(), evt_weight_ );
-            FillHisto( h_Lep1phi[8], Lep1.Phi(), evt_weight_ );
-            FillHisto( h_Lep2phi[8], Lep2.Phi(), evt_weight_ );
-
-            FillHisto( h_Jet1pt[8] , Jet1.Pt() , evt_weight_ );
-            FillHisto( h_Jet2pt[8] , Jet2.Pt() , evt_weight_ );
-            FillHisto( h_Jet1eta[8], Jet1.Eta(), evt_weight_ );
-            FillHisto( h_Jet2eta[8], Jet2.Eta(), evt_weight_ );
-            FillHisto( h_Jet1phi[8], Jet1.Phi(), evt_weight_ );
-            FillHisto( h_Jet2phi[8], Jet2.Phi(), evt_weight_ );
-            FillHisto( h_METpt[8]  , Met.Pt()  , evt_weight_ );
-            FillHisto( h_METphi[8] , Met.Phi() , evt_weight_ );
-            //FillHisto( h_HT[8]     , AllJetpt   , evt_weight_);
-            
-            FillHisto( h_DiLepMass[8], ( Lep1+Lep2 ).M(), evt_weight_ );
-            
-            FillHisto( h_Num_PV[8]   , num_pv          ,  evt_weight_ );
-            FillHisto( h_Num_Jets[8] , v_jet_idx.size(),  evt_weight_ );
-            FillHisto( h_Num_bJets[8], v_bjet_idx.size(), evt_weight_ );
-            if ( Top.Pt() > AnTop.Pt() ) { Top1 = Top; Top2 = AnTop; }
-            else { Top1 = AnTop; Top2 = Top; }
-            
-            FillHisto( h_TopMass      , Top.M()         , evt_weight_ );
-            FillHisto( h_Toppt        , Top.Pt()        , evt_weight_ );
-            FillHisto( h_Topphi       , Top.Phi()       , evt_weight_ );
-            FillHisto( h_TopRapidity  , Top.Rapidity()  , evt_weight_ );
-            FillHisto( h_TopEnergy    , Top.Energy()    , evt_weight_ );
-            FillHisto( h_AnTopMass    , AnTop.M()       , evt_weight_ );
-            FillHisto( h_AnToppt      , AnTop.Pt()      , evt_weight_ );
-            FillHisto( h_AnTopphi     , AnTop.Phi()     , evt_weight_ );
-            FillHisto( h_AnTopRapidity, AnTop.Rapidity(), evt_weight_ );
-            FillHisto( h_AnTopEnergy  , AnTop.Energy()  , evt_weight_ );
-            
-            FillHisto( h_W1Mass , W1.M()  , evt_weight_ );
-            FillHisto( h_W2Mass , W2.M()  , evt_weight_ );
-            
-            FillHisto( h_W1Mt , W1.Mt()  , evt_weight_ );
-            FillHisto( h_W2Mt , W2.Mt()  , evt_weight_ );
-            
-            //FillHisto( h_bJet1Energy , bJet1.Energy()  , evt_weight_ );
-            //FillHisto( h_bJet2Energy , bJet2.Energy()  , evt_weight_ );
-            
-            FillHisto( h_bJetEnergy   , bJet.Energy()   , evt_weight_ );
-            FillHisto( h_AnbJetEnergy , AnbJet.Energy() , evt_weight_ );
-            FillHisto( h_bJetPt       , bJet.Pt()   , evt_weight_ );
-            FillHisto( h_AnbJetPt     , AnbJet.Pt() , evt_weight_ );
-            FillHisto( h_LepEnergy    , Lep.Energy()    , evt_weight_ );
-            FillHisto( h_AnLepEnergy  , AnLep.Energy()  , evt_weight_ );
-            FillHisto( h_NuEnergy     , Nu.Energy()     , evt_weight_ );
-            FillHisto( h_AnNuEnergy   , AnNu.Energy()   , evt_weight_ );
-
-            std::vector<double> v_recocp_O;
-            v_recocp_O.push_back( SSBCPVCal->getO1Vari( Top, AnTop, AnLep, Lep )  );
-            v_recocp_O.push_back( SSBCPVCal->getO2Vari( Top, AnTop, bJet, AnbJet ) );
-            v_recocp_O.push_back( SSBCPVCal->getO3Vari( bJet, AnbJet, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO4Vari( AnbJet, bJet, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO5Vari( bJet , AnbJet, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO6Vari( bJet , AnbJet, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO7Vari( Top , AnTop, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO8Vari( Top, AnTop, bJet , AnbJet, AnLep, Lep ) );
-            v_recocp_O.push_back( SSBCPVCal->getO9Vari( bJet , AnbJet, AnLep, Lep )  );
-            v_recocp_O.push_back( SSBCPVCal->getO10Vari( bJet , AnbJet, AnLep, Lep )  );
-            v_recocp_O.push_back( SSBCPVCal->getO11Vari( bJet , AnbJet, AnLep, Lep )  );
-            v_recocp_O.push_back( SSBCPVCal->getO12Vari( bJet , AnbJet, AnLep, Lep )  );
-            v_recocp_O.push_back( SSBCPVCal->getO13Vari( bJet , AnbJet, AnLep, Lep )  );
-
-            for (int i = 0; i < v_recocp_O.size(); ++ i)
+            FillHisto( h_DiLepMass[5],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_cf_DiLepMass[5], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_Num_PV[5],     num_pv, evt_weight_ );
+            FillHisto( h_Lep1pt[5] ,    (Lep1).Pt()  , evt_weight_ );
+            FillHisto( h_Lep1eta[5],    (Lep1).Eta() , evt_weight_ );
+            FillHisto( h_Lep1phi[5],    (Lep1).Phi() , evt_weight_ );
+            FillHisto( h_Lep2pt[5] ,    (Lep2).Pt()  , evt_weight_ );
+            FillHisto( h_Lep2eta[5],    (Lep2).Eta() , evt_weight_ );
+            FillHisto( h_Lep2phi[5],    (Lep2).Phi() , evt_weight_ );
+            FillHisto( h_Jet1pt[5] ,    (Jet1).Pt()  , evt_weight_ );
+            FillHisto( h_Jet1eta[5],    (Jet1).Eta() , evt_weight_ );
+            FillHisto( h_Jet1phi[5],    (Jet1).Phi() , evt_weight_ );
+            FillHisto( h_Jet2pt[5] ,    (Jet2).Pt()  , evt_weight_ );
+            FillHisto( h_Jet2eta[5],    (Jet2).Eta() , evt_weight_ );
+            FillHisto( h_Jet2phi[5],    (Jet2).Phi() , evt_weight_ );
+            FillHisto( h_Num_Jets[5]  , v_jet_idx.size(), evt_weight_ );
+            FillHisto( h_METpt[5]   ,   Met.Pt()  , evt_weight_ );
+            FillHisto( h_METphi[5]  ,   Met.Phi()  , evt_weight_ );
+            SetUpKINObs();
+            if (isKinSol)
             {
-               FillHisto( h_Reco_CPO_[i], v_recocp_O[i] , evt_weight_ );
-               FillHisto( h_Reco_CPO_ReRange_[i], v_recocp_O[i] , evt_weight_ );
-            } 
-
-                  
- 
+                FillHisto( h_Lep1pt[8] , Lep1.Pt() , evt_weight_ );
+                FillHisto( h_Lep2pt[8] , Lep2.Pt() , evt_weight_ );
+                FillHisto( h_Lep1eta[8], Lep1.Eta(), evt_weight_ );
+                FillHisto( h_Lep2eta[8], Lep2.Eta(), evt_weight_ );
+                FillHisto( h_Lep1phi[8], Lep1.Phi(), evt_weight_ );
+                FillHisto( h_Lep2phi[8], Lep2.Phi(), evt_weight_ );
+                FillHisto( h_Jet1pt[8] , Jet1.Pt() , evt_weight_ );
+                FillHisto( h_Jet2pt[8] , Jet2.Pt() , evt_weight_ );
+                FillHisto( h_Jet1eta[8], Jet1.Eta(), evt_weight_ );
+                FillHisto( h_Jet2eta[8], Jet2.Eta(), evt_weight_ );
+                FillHisto( h_Jet1phi[8], Jet1.Phi(), evt_weight_ );
+                FillHisto( h_Jet2phi[8], Jet2.Phi(), evt_weight_ );
+                FillHisto( h_METpt[8]  , Met.Pt()  , evt_weight_ );
+                FillHisto( h_METphi[8] , Met.Phi() , evt_weight_ );
+                FillHisto( h_DiLepMass[8],    ( Lep1+Lep2 ).M(), evt_weight_ );
+                FillHisto( h_cf_DiLepMass[8], ( Lep1+Lep2 ).M(), evt_weight_ );
+                FillHisto( h_Num_PV[8]   , num_pv          ,  evt_weight_ );
+                FillHisto( h_Num_Jets[8] , v_jet_idx.size(),  evt_weight_ );
+                FillHisto( h_Num_bJets[8], v_bjet_idx.size(), evt_weight_ );
+                if ( Top.Pt() > AnTop.Pt() ) { Top1 = Top; Top2 = AnTop; }
+                else { Top1 = AnTop; Top2 = Top; }
+                FillHisto( h_TopMass      , Top.M()         , evt_weight_ );
+                FillHisto( h_Toppt        , Top.Pt()        , evt_weight_ );
+                FillHisto( h_Topphi       , Top.Phi()       , evt_weight_ );
+                FillHisto( h_TopRapidity  , Top.Rapidity()  , evt_weight_ );
+                FillHisto( h_TopEnergy    , Top.Energy()    , evt_weight_ );
+                FillHisto( h_AnTopMass    , AnTop.M()       , evt_weight_ );
+                FillHisto( h_AnToppt      , AnTop.Pt()      , evt_weight_ );
+                FillHisto( h_AnTopphi     , AnTop.Phi()     , evt_weight_ );
+                FillHisto( h_AnTopRapidity, AnTop.Rapidity(), evt_weight_ );
+                FillHisto( h_AnTopEnergy  , AnTop.Energy()  , evt_weight_ );
+                FillHisto( h_W1Mass , W1.M()  , evt_weight_ );
+                FillHisto( h_W2Mass , W2.M()  , evt_weight_ );
+                FillHisto( h_W1Mt , W1.Mt()  , evt_weight_ );
+                FillHisto( h_W2Mt , W2.Mt()  , evt_weight_ );
+                FillHisto( h_bJetEnergy   , bJet.Energy()   , evt_weight_ );
+                FillHisto( h_AnbJetEnergy , AnbJet.Energy() , evt_weight_ );
+                FillHisto( h_bJetPt       , bJet.Pt()   , evt_weight_ );
+                FillHisto( h_AnbJetPt     , AnbJet.Pt() , evt_weight_ );
+                FillHisto( h_LepEnergy    , Lep.Energy()    , evt_weight_ );
+                FillHisto( h_AnLepEnergy  , AnLep.Energy()  , evt_weight_ );
+                FillHisto( h_NuEnergy     , Nu.Energy()     , evt_weight_ );
+                FillHisto( h_AnNuEnergy   , AnNu.Energy()   , evt_weight_ );
+                std::vector<double> v_recocp_O;
+                v_recocp_O.push_back( SSBCPVCal->getO1Vari( Top, AnTop, AnLep, Lep )  );
+                v_recocp_O.push_back( SSBCPVCal->getO2Vari( Top, AnTop, bJet, AnbJet ) );
+                v_recocp_O.push_back( SSBCPVCal->getO3Vari( bJet, AnbJet, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO4Vari( AnbJet, bJet, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO5Vari( bJet , AnbJet, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO6Vari( bJet , AnbJet, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO7Vari( Top , AnTop, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO8Vari( Top, AnTop, bJet , AnbJet, AnLep, Lep ) );
+                v_recocp_O.push_back( SSBCPVCal->getO9Vari( bJet , AnbJet, AnLep, Lep )  );
+                v_recocp_O.push_back( SSBCPVCal->getO10Vari( bJet , AnbJet, AnLep, Lep )  );
+                v_recocp_O.push_back( SSBCPVCal->getO11Vari( bJet , AnbJet, AnLep, Lep )  );
+                v_recocp_O.push_back( SSBCPVCal->getO12Vari( bJet , AnbJet, AnLep, Lep )  );
+                v_recocp_O.push_back( SSBCPVCal->getO13Vari( bJet , AnbJet, AnLep, Lep )  );
+                for (int i = 0; i < v_recocp_O.size(); ++i)
+                {
+                    FillHisto( h_Reco_CPO_[i], v_recocp_O[i] , evt_weight_ );
+                    FillHisto( h_Reco_CPO_ReRange_[i], v_recocp_O[i] , evt_weight_ );
+                }
+            }
         }
+        else {
+            FillHisto( h_NoMETCut_DiLepMass[4],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_cf_NoMETCut_DiLepMass[4], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_NoMETCut_Num_PV[4],     num_pv, evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1pt[4] ,    (Lep1).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1eta[4],    (Lep1).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1phi[4],    (Lep1).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2pt[4] ,    (Lep2).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2eta[4],    (Lep2).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2phi[4],    (Lep2).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1pt[4] ,    (Jet1).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1eta[4],    (Jet1).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1phi[4],    (Jet1).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2pt[4] ,    (Jet2).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2eta[4],    (Jet2).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2phi[4],    (Jet2).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Num_Jets[4]  , v_jet_idx.size(), evt_weight_ );
+            FillHisto( h_NoMETCut_METpt[4]   ,   Met.Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_METphi[4]  ,   Met.Phi()  , evt_weight_ );
 
+            BTaggingSFApply();
+
+            if (NumbJetCut(v_bjet_idx) == false) {continue;}
+
+            FillHisto( h_NoMETCut_DiLepMass[5],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_cf_NoMETCut_DiLepMass[5], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+            FillHisto( h_NoMETCut_Num_PV[5],     num_pv, evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1pt[5] ,    (Lep1).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1eta[5],    (Lep1).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep1phi[5],    (Lep1).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2pt[5] ,    (Lep2).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2eta[5],    (Lep2).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Lep2phi[5],    (Lep2).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1pt[5] ,    (Jet1).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1eta[5],    (Jet1).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet1phi[5],    (Jet1).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2pt[5] ,    (Jet2).Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2eta[5],    (Jet2).Eta() , evt_weight_ );
+            FillHisto( h_NoMETCut_Jet2phi[5],    (Jet2).Phi() , evt_weight_ );
+            FillHisto( h_NoMETCut_Num_Jets[5]  , v_jet_idx.size(), evt_weight_ );
+            FillHisto( h_NoMETCut_METpt[5]   ,   Met.Pt()  , evt_weight_ );
+            FillHisto( h_NoMETCut_METphi[5]  ,   Met.Phi()  , evt_weight_ );
+        }
 
     }// end of event iteration //
     std::cout << "End Loop !!" << std::endl;
 }
-
 
 template <typename T>
 std::unique_ptr<TTreeReaderValue<T>> Analysis::DeepCopy(const std::unique_ptr<TTreeReaderValue<T>>& src) {
@@ -2020,7 +2074,29 @@ void Analysis::DeclareHistos()
       h_METpt[i]  = new TH1D(Form("h_METpt_%d",i), Form("MET pT %s" ,cutflowName[i].Data()), 200, 0.0, 200); h_METpt[i]->Sumw2();
       h_METphi[i] = new TH1D(Form("h_METphi_%d",i), Form("MET Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_METphi[i]->Sumw2();
 
+
       h_DiLepMass[i] = new TH1D(Form("h_DiLepMass_%d",i),Form("Di-Lepton Invariant Mass %s",cutflowName[i].Data()), 300, 0.0, 300); h_DiLepMass[i]->Sumw2();
+      h_cf_DiLepMass[i] = new TH1D(Form("h_cf_DiLepMass_%d",i),Form("Di-Lepton Invariant Mass for cutflow %s",cutflowName[i].Data()), 300, 0.0, 300); h_cf_DiLepMass[i]->Sumw2();
+
+      h_NoMETCut_Lep1pt[i]  = new TH1D(Form("h_NoMETCut_Lep1pt_%d" ,i), Form("NoMETCut Leading Lepton pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Lep1pt[i]->Sumw2();
+      h_NoMETCut_Lep2pt[i]  = new TH1D(Form("h_NoMETCut_Lep2pt_%d" ,i), Form("NoMETCut Second Leading Lepton pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Lep2pt[i]->Sumw2();
+      h_NoMETCut_Lep1eta[i] = new TH1D(Form("h_NoMETCut_Lep1eta_%d",i), Form("NoMETCut Leading Lepton Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Lep1eta[i]->Sumw2();
+      h_NoMETCut_Lep2eta[i] = new TH1D(Form("h_NoMETCut_Lep2eta_%d",i), Form("NoMETCut Second Leading Lepton Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Lep2eta[i]->Sumw2();
+      h_NoMETCut_Lep1phi[i] = new TH1D(Form("h_NoMETCut_Lep1phi_%d",i), Form("NoMETCut Leading Lepton Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Lep1phi[i]->Sumw2();
+      h_NoMETCut_Lep2phi[i] = new TH1D(Form("h_NoMETCut_Lep2phi_%d",i), Form("NoMETCut Second Leading Lepton Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Lep2phi[i]->Sumw2();
+      h_NoMETCut_Jet1pt[i]  = new TH1D(Form("h_NoMETCut_Jet1pt_%d" ,i), Form("NoMETCut Leading Jet pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Jet1pt[i]->Sumw2();
+      h_NoMETCut_Jet2pt[i]  = new TH1D(Form("h_NoMETCut_Jet2pt_%d" ,i), Form("NoMETCut Second Leading Jet pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Jet2pt[i]->Sumw2();
+      h_NoMETCut_Jet1eta[i] = new TH1D(Form("h_NoMETCut_Jet1eta_%d",i), Form("NoMETCut Leading Jet Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Jet1eta[i]->Sumw2();
+      h_NoMETCut_Jet2eta[i] = new TH1D(Form("h_NoMETCut_Jet2eta_%d",i), Form("NoMETCut Second Leading Jet Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Jet2eta[i]->Sumw2();
+      h_NoMETCut_Jet1phi[i] = new TH1D(Form("h_NoMETCut_Jet1phi_%d",i), Form("NoMETCut Leading Jet Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Jet1phi[i]->Sumw2();
+      h_NoMETCut_Jet2phi[i] = new TH1D(Form("h_NoMETCut_Jet2phi_%d",i), Form("NoMETCut Second Leading Jet Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Jet2phi[i]->Sumw2();
+      h_NoMETCut_METpt[i]   = new TH1D(Form("h_NoMETCut_METpt_%d"  ,i), Form("NoMETCut MET pT %s",cutflowName[i].Data()), 200, 0.0, 200); h_NoMETCut_METpt[i]->Sumw2();
+      h_NoMETCut_METphi[i]  = new TH1D(Form("h_NoMETCut_METphi_%d" ,i), Form("NoMETCut MET Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_METphi[i]->Sumw2();
+      h_NoMETCut_DiLepMass[i]    = new TH1D(Form("h_NoMETCut_DiLepMass_%d",i),Form("NoMETCut Di-Lepton Invariant Mass %s",cutflowName[i].Data()), 300, 0.0, 300); h_NoMETCut_DiLepMass[i]->Sumw2();
+      h_cf_NoMETCut_DiLepMass[i] = new TH1D(Form("h_cf_NoMETCut_DiLepMass_%d",i),Form("NoMETCut Di-Lepton Invariant Mass for cutflow %s",cutflowName[i].Data()), 300, 0.0, 300); h_cf_NoMETCut_DiLepMass[i]->Sumw2();
+      h_NoMETCut_Num_PV[i]    = new TH1D(Form("h_NoMETCut_Num_PV_%d",i),    Form("NoMETCut Num of Primary Vertex %s",cutflowName[i].Data()), 100, 0.0, 100); h_NoMETCut_Num_PV[i]->Sumw2();
+      h_NoMETCut_Num_Jets[i]  = new TH1D(Form("h_NoMETCut_Num_Jets_%d",i),  Form("NoMETCut Num of Jets %s",cutflowName[i].Data()), 20, 0.0, 20); h_NoMETCut_Num_Jets[i]->Sumw2();
+      h_NoMETCut_Num_bJets[i] = new TH1D(Form("h_NoMETCut_Num_bJets_%d",i), Form("NoMETCut Num of b Jets %s",cutflowName[i].Data()), 20, 0.0, 20); h_NoMETCut_Num_bJets[i]->Sumw2();
       h_Num_PV[i]    = new TH1D(Form("h_Num_PV_%d",i),     Form("Num of Primary Vertex after %s",cutflowName[i].Data()), 100, 0.0, 100); h_Num_PV[i]->Sumw2();
       h_Num_Jets[i]  = new TH1D(Form("h_Num_Jets_%d",i), Form("Num. of Jets after %s",cutflowName[i].Data()), 20, 0.0, 20); h_Num_Jets[i]->Sumw2();
       h_Num_bJets[i] = new TH1D(Form("h_Num_bJets_%d",i),Form("Num. of b Jets after %s",cutflowName[i].Data()), 20, 0.0, 20); h_Num_bJets[i]->Sumw2();

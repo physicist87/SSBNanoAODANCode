@@ -440,7 +440,32 @@ private:
     TH1D *h_HT[10]; 
     TH1D *h_METpt[10]; 
     TH1D *h_METphi[10]; 
-    TH1D *h_DiLepMass[10]; 
+    TH1D *h_DiLepMass[10];
+    TH1D *h_cf_DiLepMass[10];
+
+    TH1D *h_NoMETCut_Lep1pt[10];
+    TH1D *h_NoMETCut_Lep2pt[10];
+    TH1D *h_NoMETCut_Lep1eta[10];
+    TH1D *h_NoMETCut_Lep2eta[10];
+    TH1D *h_NoMETCut_Lep1phi[10];
+    TH1D *h_NoMETCut_Lep2phi[10];
+    TH1D *h_NoMETCut_Jet1pt[10];
+    TH1D *h_NoMETCut_Jet2pt[10];
+    TH1D *h_NoMETCut_Jet1eta[10];
+    TH1D *h_NoMETCut_Jet2eta[10];
+    TH1D *h_NoMETCut_Jet1phi[10];
+    TH1D *h_NoMETCut_Jet2phi[10];
+    TH1D *h_NoMETCut_HT[10];
+    TH1D *h_NoMETCut_METpt[10];
+    TH1D *h_NoMETCut_METphi[10];
+    TH1D *h_NoMETCut_DiLepMass[10];
+    TH1D *h_cf_NoMETCut_DiLepMass[10];
+    TH1D *h_NoMETCut_Num_PV[10];
+    TH1D *h_NoMETCut_Num_Jets[10];
+    TH1D *h_NoMETCut_Num_bJets[10];
+
+
+
     TH1D *h_Num_PV[10];
     TH1D *h_Num_Jets[10];
     TH1D *h_Num_bJets[10];
