@@ -121,6 +121,8 @@ void Analysis::InitBranches(const std::string &branchListFile) {
                 intSingles[branchName] = std::make_unique<TTreeReaderValue<Int_t>>(fReader, branchName.c_str());
             } else if (dataType == "UInt_t" && varType == "single") {
                 uintSingles[branchName] = std::make_unique<TTreeReaderValue<UInt_t>>(fReader, branchName.c_str());
+            } else if (dataType == "ULong64_t" && varType == "single") {
+                ulongSingles[branchName] = std::make_unique<TTreeReaderValue<ULong64_t>>(fReader, branchName.c_str());
             } else if (dataType == "Float_t" && varType == "single") {
                 floatSingles[branchName] = std::make_unique<TTreeReaderValue<Float_t>>(fReader, branchName.c_str());
             } else if (dataType == "UChar_t" && varType == "single") { // New case for UChar_t single value
@@ -155,6 +157,10 @@ void Analysis::SetVariables() {
     RunPeriod = SSBConfReader->GetText( "RunRange" );
     Decaymode = SSBConfReader->GetText( "Channel" ); // Channel
     XsecTable_ = SSBConfReader->GetText( "XSecTablesName" );
+
+    std::string blindStr = SSBConfReader->GetText( "isBlind" );
+    isBlind = (blindStr == "True" || blindStr == "true");
+    std::cout << "[Blind] isData=" << isData << " isBlind=" << isBlind << std::endl;
 
 
     /// Set Trigger List ///
@@ -903,11 +909,33 @@ void Analysis::Loop() {
             v_recocp_O.push_back( SSBCPVCal->getO12Vari( bJet , AnbJet, AnLep, Lep )  );
             v_recocp_O.push_back( SSBCPVCal->getO13Vari( bJet , AnbJet, AnLep, Lep )  );
 
-            for (int i = 0; i < v_recocp_O.size(); ++ i)
+            // Blind CP observables: only for data when isBlind is set
+            // Per-event sign is randomized deterministically using run/lumi/event as seed.
+            // Each observable uses a different bit of the hash so they are randomized independently.
+            if (isData && isBlind) {
+                unsigned int      run_num  = **uintSingles["run"];
+                unsigned int      lumi_num = **uintSingles["luminosityBlock"];
+                unsigned long long evt_num = **ulongSingles["event"];
+
+                uint64_t seed = (uint64_t)run_num  * 100000000ULL
+                              + (uint64_t)lumi_num * 1000000ULL
+                              + (evt_num & 0xFFFFFFFFULL);
+                seed ^= (seed >> 33);
+                seed *= 0xff51afd7ed558ccdULL;
+                seed ^= (seed >> 33);
+                seed *= 0xc4ceb9fe1a85ec53ULL;
+                seed ^= (seed >> 33);
+
+                for (int i = 0; i < (int)v_recocp_O.size(); ++i) {
+                    if ((seed >> i) & 1ULL) v_recocp_O[i] = -v_recocp_O[i];
+                }
+            }
+
+            for (int i = 0; i < (int)v_recocp_O.size(); ++i)
             {
-               FillHisto( h_Reco_CPO_[i], v_recocp_O[i] , evt_weight_ );
-               FillHisto( h_Reco_CPO_ReRange_[i], v_recocp_O[i] , evt_weight_ );
-            } 
+               FillHisto( h_Reco_CPO_[i],         v_recocp_O[i], evt_weight_ );
+               FillHisto( h_Reco_CPO_ReRange_[i],  v_recocp_O[i], evt_weight_ );
+            }
 
                   
  
@@ -2938,4 +2966,3 @@ void Analysis::PUIDSFApply() {
     //std::cout << "[PUID] Event weight: " << puid_sf_weight_ 
     //          << " (p_mc=" << p_mc << ", p_data=" << p_data << ")" << std::endl;
 }
-

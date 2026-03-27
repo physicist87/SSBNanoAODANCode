@@ -62,6 +62,7 @@ private:
     bool isjetveto_event_;
 
     bool isData;
+    bool isBlind;
     //TextReader from Jaehoon.
     TextReader *SSBConfReader;
     SSBCorrections *SSBCorr;
@@ -126,8 +127,9 @@ private:
     // Maps for dynamic branch storage
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Bool_t>>> boolSingles;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Int_t>>> intSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UInt_t>>> uintSingles; // Add uintSingles for UInt_t types
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UChar_t>>> ucharSingles; // Add uintSingles for UInt_t types
+    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UInt_t>>> uintSingles;
+    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<ULong64_t>>> ulongSingles;
+    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UChar_t>>> ucharSingles;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Float_t>>> floatSingles;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Float_t>>> floatVectors;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Bool_t>>> boolVectors;
