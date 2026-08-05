@@ -263,8 +263,29 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         jer_smear_ = nullptr;
     }
 
-    auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
-    pujetid_sf_ = jmar_sf_set->at("PUJetID_eff");
+    // JMAR (PU jet ID SF) - was NOT wrapped in try/catch, unlike every other
+    // optional correction load in this constructor (jec_l1_, jer_sfunc_,
+    // jer_smear_, jetvetomap_ below). correction::CorrectionSet::from_file()
+    // throws std::runtime_error if the file doesn't exist, and with no
+    // try/catch that propagates all the way out of the constructor uncaught -
+    // std::terminate()/abort(), crashing the whole job, instead of a graceful
+    // [WARNING] + fallback like everything else here. GetPUJetIDSFAndEff()
+    // already null-checks pujetid_sf_ and returns 1.0 (no PU-ID reweighting)
+    // if it's not loaded, so there was already a safe fallback available -
+    // this constructor just never used it. Found from a real run where
+    // jmar.json.gz didn't exist at the expected CAT cvmfs path (2018 UL JMAR
+    // apparently doesn't have a NanoAODv15 folder there, or is named/located
+    // differently - worth an `ls` on your cvmfs to confirm the real path).
+    try {
+        auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
+        pujetid_sf_ = jmar_sf_set->at("PUJetID_eff");
+        std::cout << "[INFO] Loaded PU jet ID SF from " << jmar_path << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[WARNING] Could not load JMARPath=" << jmar_path << ": " << e.what()
+                  << ". PU jet ID SF will be unavailable (GetPUJetIDSFAndEff() returns 1.0 - "
+                  << "no PU-ID reweighting applied)." << std::endl;
+        pujetid_sf_ = nullptr;
+    }
 
     jveto_name_ = jveto_name;
     jveto_key_ = jveto_map_key;
@@ -375,9 +396,26 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     std::string btag_eff_path = "";
     if (!is_data) {
         std::string process_subdir = GetProcessSubDir(inputfileName);
+        // File-naming ONLY fix: your actual efficiency ROOT files are named
+        // "btagEff_UParTAK4.root", not "btagEff_UParT.root" (confirmed via
+        // `ls CorrectionFiles/BTag/UL2018/*/`). Using a separate
+        // btag_eff_filename_algo here (rather than changing btag_algo
+        // itself) intentionally, because btag_algo is ALSO used as the
+        // in-ROOT-file histogram name prefix ("eff_" + btag_algo + "_b_...")
+        // via LoadMCBtagEfficiencies/GetMCBtagEfficiency/
+        // ComputeBTagEventWeight (and Analysis.cpp's separate btag_algo_
+        // member, which matches this same "UParT" convention) - that's an
+        // internal, self-consistent naming scheme independent of the
+        // external .root filename, and I have no way to confirm here
+        // whether the histograms INSIDE btagEff_UParTAK4.root are named
+        // "eff_UParT_b_Medium" or "eff_UParTAK4_b_Medium". If you see
+        // "[WARNING] Histogram not found: eff_UParT_..." after this fix,
+        // the histograms themselves use the AK4 suffix too - tell me and
+        // I'll change btag_algo (both here and in Analysis.cpp) to match.
+        std::string btag_eff_filename_algo = (btag_algo == "UParT") ? "UParTAK4" : btag_algo;
         btag_eff_path = "CorrectionFiles/BTag/UL" + RunPeriod
                       + "/" + process_subdir
-                      + "/btagEff_" + btag_algo + ".root";
+                      + "/btagEff_" + btag_eff_filename_algo + ".root";
         std::cout << "[INFO] btag_eff_path: " << btag_eff_path << std::endl;
     }
 

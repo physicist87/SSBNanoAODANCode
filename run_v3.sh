@@ -2,9 +2,9 @@
 
 # === [CONFIGURATION] ===
 runPeriod="UL2017"
-runPeriod="UL2018"
 runPeriod="UL2016PreVFP"
 StudyName="Testv1"
+runPeriod="UL2018"
 Channels="MuMu"
 
 echo "[INFO] runPeriod = $runPeriod"
@@ -12,7 +12,7 @@ echo "[INFO] Channels  = $Channels"
 
 # List of input samples in the form: "Directory/FileBase"
 inputlists=(
-    "TTbar_Signal/TTbar_Signal"
+    "TTbar_Signal_1"
     #"Data_SingleMuon_Run2017C/Data_SingleMuon_Run2017C_1"
     #"Data_SingleMuon_Run2017E/Data_SingleMuon_Run2017E_1"
     #"Data_SingleMuon_Run2017F/Data_SingleMuon_Run2017F_1"
@@ -29,6 +29,8 @@ config="dimuon.config"
 
 branch_list="${runPeriod}/branch_list_Run2017CtoF.txt"
 branch_list="${runPeriod}/branch_list.txt"
+branch_list="${runPeriod}/branch_list_v15.txt"
+
 
 # === [MAIN LOOP OVER INPUT LISTS] ===
 for entry in "${inputlists[@]}"; do
