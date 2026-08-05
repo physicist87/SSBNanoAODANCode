@@ -5,3 +5,6 @@ input/
 CondorJobs/condorLog/
 CondorJobs/condorSubmit/
 CorrectionFiles/BTag_backup/
+*.zip
+NanoTrees
+NanoTrees/

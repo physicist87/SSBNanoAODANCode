@@ -30,8 +30,12 @@
 // Textreader
 #include "./../TextReader/TextReader.hpp"
 
-// CPVObservables Calculator 
+// CPVObservables Calculator
 #include "./../interface/SSBCPVCalc.h"
+
+// NanoAOD branch reading (version-agnostic: handles NanoAOD storage-type
+// changes and renames between versions so this class doesn't have to)
+#include "./NanoAODBranchReader.h"
 
 
 class Analysis {
@@ -124,21 +128,26 @@ private:
 
 
 
-    // Maps for dynamic branch storage
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Bool_t>>> boolSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Int_t>>> intSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UInt_t>>> uintSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<ULong64_t>>> ulongSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UChar_t>>> ucharSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Float_t>>> floatSingles;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Float_t>>> floatVectors;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Bool_t>>> boolVectors;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Int_t>>> intVectors;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<UInt_t>>> uintVectors;
-    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<UChar_t>>> ucharVectors;
+    // NanoAOD branch reading (the dynamic type maps, InitBranches, and the
+    // version-agnostic accessors GetIntArrayValue/GetIntSingleValue/
+    // BranchIsAvailable/GetFloatSingleValueByAlias/GetFloatSinglePtrByAlias)
+    // live in NanoAODBranchReader now - see interface/NanoAODBranchReader.h.
+    // Analysis calls through branchReader_ everywhere it used to touch those
+    // maps directly (e.g. branchReader_.floatVectors["Jet_pt"].get()).
+    NanoAODBranchReader branchReader_;
 
-    // Initialize TTreeReader with branches from the list
-    void InitBranches(const std::string &branchListFile);
+    // ------------------------------------------------------------------
+    // NanoAODv15 switched the Jet collection to AK4 Puppi jets and removed
+    // the Jet_jetId flag. These reimplement the POG-recommended tight / tight
+    // lepton-veto working points from the jet energy fractions directly.
+    // idx is the index into the *raw* NanoAOD Jet collection (not v_jet_idx).
+    // ------------------------------------------------------------------
+    bool PassJetIdTight(int idx) const;
+    bool PassJetIdTightLepVeto(int idx) const;
+    // Dispatches to PassJetIdTight/PassJetIdTightLepVeto based on the
+    // "Jet_ID" config value (JetId: "PFTight" or "PFTightLepVeto").
+    bool PassConfiguredJetId(int idx) const;
+
     std::string removeSubstring(std::string &str, const std::string &keyword);
     //std::unique_ptr<TTreeReaderValue<bool>> DeepCopy(const std::unique_ptr<TTreeReaderValue<bool>>& src);
     template <typename T>std::unique_ptr<TTreeReaderValue<T>> DeepCopy(const std::unique_ptr<TTreeReaderValue<T>>& src);

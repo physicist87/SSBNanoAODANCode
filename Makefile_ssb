@@ -51,6 +51,7 @@ GLIBS           = $(ROOTGLIBS) -L/usr/X11R6/lib -lXext -lGenVector
 # List of object files to compile
 OBJS = \
     CommonTools.o \
+    NanoAODBranchReader.o \
     Analysis.o \
     main_ssb.o \
     TextReader.o \
@@ -68,6 +69,7 @@ OBJS = \
 # Input source and header dependencies
 INPUTS = \
     ./interface/Analysis.h ./src/Analysis.cpp main_ssb.cpp \
+    ./interface/NanoAODBranchReader.h ./src/NanoAODBranchReader.cpp \
     ./TextReader/TextReader.hpp ./TextReader/TextReader.cpp \
     ./KinSolv/utils.h ./KinSolv/utils.cc \
     ./KinSolv/analysisUtils.h ./KinSolv/analysisUtils.cc \
@@ -88,8 +90,11 @@ all: $(OBJS)
 main_ssb.o: main_ssb.cpp $(INPUTS)
 	$(CC) $(CXXFLAGS) -c main_ssb.cpp
 
-Analysis.o: ./interface/Analysis.h ./src/Analysis.cpp
+Analysis.o: ./interface/Analysis.h ./src/Analysis.cpp ./interface/NanoAODBranchReader.h
 	$(CC) $(CXXFLAGS) -c ./src/Analysis.cpp
+
+NanoAODBranchReader.o: ./interface/NanoAODBranchReader.h ./src/NanoAODBranchReader.cpp
+	$(CC) $(CXXFLAGS) -c ./src/NanoAODBranchReader.cpp
 
 CommonTools.o: CommonTools.hpp CommonTools.cpp
 	$(CC) $(CXXFLAGS) -c CommonTools.cpp

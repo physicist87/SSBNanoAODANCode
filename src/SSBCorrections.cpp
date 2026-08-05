@@ -18,18 +18,39 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     reader->PrintoutVariables();
 
 
-    std::string jsonDir;// = std::filesystem::current_path().string() + "/jsonpog-integration/POG/";
-    const std::string cvmfsPath = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/";
-    if (std::filesystem::exists(cvmfsPath)) {
-        std::cout << "[INFO] Using CVMFS path for JSONs: " << cvmfsPath << std::endl;
-        jsonDir = cvmfsPath;
+    // JSON correction file root, in priority order:
+    //   1. New CMS "CAT" cvmfs distribution (cms-griddata.cern.ch), organized as
+    //      <POG>/<campaign>/latest/<file>.json.gz - e.g. for NanoAODv15 Puppi
+    //      jets: JME/Run2-2018-UL-NanoAODv15/latest/jet_jerc.json.gz. This is the
+    //      one that actually has Puppi-era (AK4PFPuppi) JEC/JER corrections.
+    //   2. The older jsonpog-integration cvmfs distribution (kept for v9/PFchs
+    //      running on this same code, or if the new mount isn't available).
+    //   3. A local jsonpog-integration/ copy next to the executable, for laptops
+    //      without cvmfs.
+    // Config *Path values (JECPath, PUWeightPath, etc.) are relative to whichever
+    // root is picked here, so they need to match that root's directory layout -
+    // see the configs for the "<POG>/<campaign>/latest/<file>" paths used with
+    // the new CAT layout. NOTE: the <campaign> folder name is NOT uniform
+    // across POGs - confirmed via `ls LUM/Run*`: LUM keeps
+    // "Run2-2018-UL-NanoAODv9" even when running a v15 analysis (pileup
+    // profiles don't depend on the Jet collection), while JME needed a new
+    // "Run2-2018-UL-NanoAODv15" folder specifically for the Puppi-era
+    // corrections. Don't assume one suffix applies to every POG's path.
+    std::string jsonDir;
+    const std::string catCvmfsPath  = "/cvmfs/cms-griddata.cern.ch/cat/metadata/";
+    const std::string oldCvmfsPath  = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/";
+    if (std::filesystem::exists(catCvmfsPath)) {
+        std::cout << "[INFO] Using new CAT CVMFS path for JSONs: " << catCvmfsPath << std::endl;
+        jsonDir = catCvmfsPath;
+    } else if (std::filesystem::exists(oldCvmfsPath)) {
+        std::cout << "[INFO] New CAT CVMFS path not found - using legacy jsonpog-integration CVMFS path: "
+                  << oldCvmfsPath << std::endl;
+        jsonDir = oldCvmfsPath;
     } else {
         std::string localPath = std::filesystem::current_path().string() + "/jsonpog-integration/POG/";
-        std::cout << "[WARNING] CVMFS path not found. Falling back to local path: " << localPath << std::endl;
+        std::cout << "[WARNING] No CVMFS JSON path found. Falling back to local path: " << localPath << std::endl;
         jsonDir = localPath;
     }
-
-//    std::string jsonDir = std::filesystem::current_path().string() + "/jsonpog-integration/POG/";
 
     std::string puw_path     = reader->GetText("PUWeightPath");
     std::string jec_path     = reader->GetText("JECPath");
@@ -112,9 +133,22 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     }
 
     std::cout << "era : " << era <<  std::endl;
-    std::cout << "jec_name: " << jec_name << std::endl; 
-    jec_name = ExpandJECName(jec_name, RunPeriod, era, is_data); 
-    std::cout << "after ExpandJECName jec_name: " << jec_name << std::endl; 
+    std::cout << "jec_name: " << jec_name << std::endl;
+    // JetAlgoTag/JECLevel are optional config overrides; if absent, ExpandJECName
+    // falls back to its NanoAODv15 Puppi-jet defaults ("AK4PFPuppi"/"L1L2L3Res").
+    // Set JetAlgoTag="AK4PFchs" in the config to run this same code over v9/PFchs
+    // input instead.
+    std::string jetAlgoTag = reader->Check("JetAlgoTag") ? reader->GetText("JetAlgoTag") : "AK4PFPuppi";
+    std::string jecLevelTag = reader->Check("JECLevel") ? reader->GetText("JECLevel") : "L1L2L3Res";
+    // Keep the un-expanded base tag (e.g. "Summer20UL18NanoV15_V1") around so
+    // we can also derive the L1FastJet-only correction name below (needed as
+    // the Type-1 MET baseline - see ApplyType1METWithCorrT1) with a second
+    // ExpandJECName call using jecLevel="L1FastJet" instead - jec_name itself
+    // gets overwritten with the full L1L2L3Res-level name on the next line.
+    std::string jecBaseNameForL1 = jec_name;
+    jec_name = ExpandJECName(jec_name, RunPeriod, era, is_data, jetAlgoTag, jecLevelTag);
+    std::cout << "after ExpandJECName jec_name: " << jec_name << std::endl;
+    std::string jecL1Name = ExpandJECName(jecBaseNameForL1, RunPeriod, era, is_data, jetAlgoTag, "L1FastJet");
     
 
 
@@ -127,11 +161,107 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     auto jec_set = correction::CorrectionSet::from_file(jsonDir + jec_path);
     jec_ = jec_set->compound().at(jec_name);
 
+    // Detect whether this compound correction needs a 5th "run" input, by
+    // probing with dummy values. This was discovered from the CAT
+    // jet_jerc.json.gz for 2018 Puppi: the DATA compound correction
+    // ("..._V1_DATA_L1L2L3Res_AK4PFPuppi") declares 5 inputs (area, eta, pt,
+    // rho, run) and appears to resolve era-dependent behavior internally from
+    // the run number, whereas the old v9/PFchs scheme (and the v15 MC
+    // compound, "..._V1_MC_L1L2L3Res_AK4PFPuppi") only take 4 (area, eta, pt,
+    // rho) and instead bake the era into the correction *name* (see
+    // ExpandJECName's per-era "_RunA/_RunB/..." logic). Probing at startup
+    // (rather than hardcoding is_data==true implies 5 inputs) means this
+    // keeps working even if a future json goes back to the old per-era-name
+    // scheme, or some other campaign/POG does something different again.
+    jec_needs_run_ = false;
+    try {
+        jec_->evaluate({1.0, 0.0, 30.0, 10.0});
+    } catch (const std::exception&) {
+        try {
+            jec_->evaluate({1.0, 0.0, 30.0, 10.0, 1});
+            jec_needs_run_ = true;
+            std::cout << "[INFO] JEC compound correction '" << jec_name
+                      << "' expects a 5th 'run' input (detected automatically) - "
+                      << "will pass the event run number to it." << std::endl;
+        } catch (const std::exception& e2) {
+            std::cerr << "[WARNING] JEC compound correction '" << jec_name
+                      << "' probe failed for both the 4-input (area,eta,pt,rho) and "
+                      << "5-input (+run) signatures: " << e2.what()
+                      << ". JEC corrections may not evaluate correctly - check jec_name "
+                      << "against your jet_jerc.json.gz." << std::endl;
+        }
+    }
+
+    // L1FastJet-only correction (single, not compound) - needed as the Type-1
+    // MET baseline (see ApplyType1METWithCorrT1/GetL1CorrectedJetPt). Same
+    // file as jec_, just a plain (non-compound) correction lookup.
+    try {
+        jec_l1_ = jec_set->at(jecL1Name);
+    } catch (const std::exception& e) {
+        std::cerr << "[WARNING] Could not load L1FastJet-only correction '" << jecL1Name
+                  << "' from " << jec_path << ": " << e.what()
+                  << ". Type-1 MET recomputation will fall back to a (fullyCorrected-raw) "
+                  << "delta instead of the CMS-recommended (fullyCorrected-L1only) one - "
+                  << "this is a known-less-accurate fallback, not the standard recipe."
+                  << std::endl;
+        jec_l1_ = nullptr;
+    }
+
     auto jer_set = correction::CorrectionSet::from_file(jsonDir + jer_path);
     jer_ = jer_set->at(jer_res_name);
 
     auto jer_sf_set = correction::CorrectionSet::from_file(jsonDir + jer_sf_path);
     jer_sf_ = jer_sf_set->at(jer_name);
+
+    // JER SF uncertainty - confirmed (by directly inspecting jet_jerc.json.gz)
+    // to be a SEPARATE correction from jer_sf_ itself, not a "systematic"
+    // input to it (jer_sf_'s own schema is evaluate({eta, pt}), no
+    // string/tag input at all) - the CMS JERC tutorial combines them as
+    // sf*(1 +/- sfUnc) for up/down. Optional: some campaigns may not publish
+    // this correction, in which case up/down variations just aren't
+    // available (SmearJER only uses "nominal" today regardless).
+    try {
+        std::string jerSfUncName = jer_name;
+        size_t pos = jerSfUncName.find("ScaleFactor");
+        if (pos != std::string::npos) {
+            jerSfUncName.replace(pos, std::string("ScaleFactor").size(), "SFUncertainty");
+        }
+        jer_sfunc_ = jer_sf_set->at(jerSfUncName);
+    } catch (const std::exception& e) {
+        std::cerr << "[WARNING] Could not load JER SF uncertainty correction (derived from JERName "
+                  << "by replacing 'ScaleFactor' with 'SFUncertainty'): " << e.what()
+                  << ". JER SF up/down variations will not be available." << std::endl;
+        jer_sfunc_ = nullptr;
+    }
+
+    // CMS JME's official "JERSmear" correctionlib tool (jer_smear.json.gz) -
+    // does the hybrid-method/stochastic JER smearing decision and the actual
+    // random smearing internally (a `hashprng` node keyed off EventID etc.),
+    // per the CMS JERC ApplicationTutorial. Path/name are config-driven since
+    // this is commonly a separate file from jet_jerc.json.gz. If either key
+    // is missing from the config or the file/correction can't be loaded,
+    // SmearJER() falls back to an in-house TRandom3-based implementation
+    // (see there) - functional, but not the officially recommended approach.
+    std::string jerSmearPath = reader->Check("JERSmearPath") ? reader->GetText("JERSmearPath") : "";
+    std::string jerSmearName = reader->Check("JERSmearName") ? reader->GetText("JERSmearName") : "JERSmear";
+    if (!jerSmearPath.empty()) {
+        try {
+            auto jerSmearSet = correction::CorrectionSet::from_file(jsonDir + jerSmearPath);
+            jer_smear_ = jerSmearSet->at(jerSmearName);
+            std::cout << "[INFO] Loaded JER smearing tool '" << jerSmearName << "' from "
+                      << jerSmearPath << " - using it for JER smearing (CMS-recommended)." << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[WARNING] Could not load JERSmearPath=" << jerSmearPath << ": " << e.what()
+                      << ". Falling back to an in-house JER smearing implementation." << std::endl;
+            jer_smear_ = nullptr;
+        }
+    } else {
+        std::cerr << "[WARNING] JERSmearPath not set in config - falling back to an in-house "
+                  << "JER smearing implementation instead of CMS's official JERSmear tool. "
+                  << "Set JERSmearPath (e.g. 'JME/Run2-2018-UL-NanoAODv15/latest/jer_smear.json.gz') "
+                  << "to use the recommended approach." << std::endl;
+        jer_smear_ = nullptr;
+    }
 
     auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
     pujetid_sf_ = jmar_sf_set->at("PUJetID_eff");
@@ -177,6 +307,9 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         btag_algo = "DeepCSV";
     } else if (jet_btag_conf.find("deepJet") != std::string::npos) {
         btag_algo = "DeepJet";
+    } else if (jet_btag_conf.find("UParT") != std::string::npos) {
+        // UParT (Unified Particle Transformer) AK4 b-tagger, new in NanoAODv15.
+        btag_algo = "UParT";
     } else if (jet_btag_conf.find("pfCSVV2") != std::string::npos) {
         btag_algo = "CSVv2";
     } else {
@@ -191,8 +324,54 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         std::cerr << "[WARNING] Unknown WP in Jet_btag: " << jet_btag_conf << std::endl;
     }
 
-    std::string btag_sf_json = "BTV/" + year_ + "_UL/btagging.json.gz";
-    std::string btag_tagger = (btag_algo == "DeepJet") ? "deepJet_comb" : "deepCSV_comb";
+    // Path scheme: config BTagSFJsonPath overrides everything (safest, since the
+    // new CAT cvmfs layout for BTV hasn't been directly confirmed - only JME's
+    // "Run2-<year>-UL-NanoAODv15/latest/" convention was confirmed from the
+    // user's cvmfs listing). Otherwise, guess the same campaign-folder scheme
+    // JME uses when running against the new CAT jsonDir, and fall back to the
+    // legacy "<year>_UL/" scheme for the old jsonpog-integration path.
+    std::string btag_sf_json;
+    if (reader->Check("BTagSFJsonPath")) {
+        btag_sf_json = reader->GetText("BTagSFJsonPath");
+    } else if (jsonDir == catCvmfsPath) {
+        btag_sf_json = "BTV/Run2-" + year_ + "-UL-NanoAODv15/latest/btagging.json.gz";
+    } else {
+        btag_sf_json = "BTV/" + year_ + "_UL/btagging.json.gz";
+    }
+
+    // correctionlib correction-name string for the b-tag SF, keyed off btag_sf_type_
+    // ("comb"/"mujets" - only meaningful for DeepJet/DeepCSV in the CMS BTV scheme).
+    // UParT's correction name in btagging.json.gz is NOT verified here - it may not
+    // even follow the "<tagger>_<sftype>" pattern used by DeepJet/DeepCSV. Override
+    // via config key BTagTaggerName if "particleTransformerAK4_<btag_sf_type_>" turns
+    // out to be wrong; check with:
+    //   python3 -c "import correctionlib; print(list(correctionlib.CorrectionSet.from_file('btagging.json.gz')))"
+    std::string btag_tagger;
+    if (reader->Check("BTagTaggerName")) {
+        btag_tagger = reader->GetText("BTagTaggerName");
+    } else if (btag_algo == "DeepJet") {
+        btag_tagger = "deepJet_" + btag_sf_type_;
+    } else if (btag_algo == "UParT") {
+        // Confirmed from the user's actual btagging.json.gz: the corrections
+        // are named "UParTAK4_comb" (b/c-jet SF) and "UParTAK4_light"
+        // (light-jet SF) - NOT "particleTransformerAK4_<type>" as originally
+        // guessed. Also unlike DeepJet/DeepCSV, UParT only ships a single
+        // "comb"-type heavy-flavor SF (no separate "..._mujets" correction),
+        // per its description: "Should not be used by ttbar measurements
+        // with large overlap of SF derivation phase spaces (emu, >=2j and
+        // e/mu==4j)" - i.e. CMS BTV's own docs flag exactly this dilepton
+        // ttbar analysis as a case to be careful with when using 'comb'.
+        // BTagSFType is therefore not applied to the tagger name here (see
+        // InitBtagSFCorrection, which special-cases the UParTAK4_* naming).
+        if (btag_sf_type_ != "comb") {
+            std::cout << "[INFO] btag_algo=UParT: BTagSFType='" << btag_sf_type_
+                      << "' has no effect - your btagging.json.gz only provides a 'comb' "
+                      << "b/c-jet SF for UParTAK4 (no 'mujets' variant exists)." << std::endl;
+        }
+        btag_tagger = "UParTAK4_comb";
+    } else {
+        btag_tagger = "deepCSV_" + btag_sf_type_;
+    }
     std::string btag_eff_path = "";
     if (!is_data) {
         std::string process_subdir = GetProcessSubDir(inputfileName);
@@ -313,63 +492,117 @@ SSBCorrections::~SSBCorrections() {
 }
 */
 
-double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area, double rho) const {
+double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area, double rho, unsigned int run_number) const {
     //std::cout << "in GetCorrectedJetPt raw_pt : " << raw_pt
     //          << " eta " << eta << " area : " << area << " rho : " << rho << std::endl;
 
-    double sf = jec_->evaluate({area, eta, raw_pt, rho});  
+    double sf = jec_needs_run_
+        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<int>(run_number)})
+        : jec_->evaluate({area, eta, raw_pt, rho});
     //std::cout << "sf in GetCorrectedJetPt : " << sf << std::endl;
 
     return raw_pt * sf;
 }
 
-double SSBCorrections::GetCorrectedJetMass(double raw_mass, double raw_pt, double eta, double area, double rho) const {
+double SSBCorrections::GetL1CorrectedJetPt(double raw_pt, double eta, double area, double rho) const {
+    if (!jec_l1_) {
+        // No L1-only correction loaded (see constructor warning) - returning
+        // raw_pt here makes ApplyType1METWithCorrT1's (corrected-L1only)
+        // delta fall back to (corrected-raw), i.e. the old/less-accurate
+        // behavior, rather than silently producing a wrong number some other way.
+        return raw_pt;
+    }
+    double c1 = jec_l1_->evaluate({area, eta, raw_pt, rho});
+    return raw_pt * c1;
+}
+
+double SSBCorrections::GetCorrectedJetMass(double raw_mass, double raw_pt, double eta, double area, double rho, unsigned int run_number) const {
     //double sf = jec_->evaluate({eta, raw_pt, area});
-    double sf = jec_->evaluate({area, eta, raw_pt, rho});
+    double sf = jec_needs_run_
+        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<int>(run_number)})
+        : jec_->evaluate({area, eta, raw_pt, rho});
     return raw_mass * sf;
 }
 
-double SSBCorrections::GetJER(double eta, double pt) const {
-    return jer_->evaluate({eta, pt});
+double SSBCorrections::GetJER(double eta, double pt, double rho) const {
+    return jer_->evaluate({eta, pt, rho});
 }
 
-double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double eta, double rho, const std::string& jer_tag) const {
-    double sf = jer_sf_->evaluate({eta, jer_tag});
+namespace {
+// Deterministic per-(event, jet) seed for JER stochastic smearing, so that:
+//  (a) results are reproducible across job re-runs/resubmissions, and
+//  (b) if JER-up/down systematic passes are added later, they can reuse the
+//      exact same random draw per jet (only the resolution/SF value differs
+//      between nominal/up/down), which is the standard way to isolate the
+//      systematic from jet-to-jet statistical fluctuation.
+// This mixes the event number with the jet's eta/phi (scaled to integers) so
+// different jets in the same event get different but reproducible seeds.
+// NOTE: this is a reasonable in-house deterministic scheme, not necessarily
+// bit-identical to CMSSW/nanoAOD-tools' internal JER smearer seed formula -
+// if bit-exact reproducibility with an existing official recipe is required,
+// substitute that exact formula here instead.
+UInt_t ComputeJerSeed(ULong64_t event, double eta, double phi) {
+    ULong64_t etaBits = static_cast<ULong64_t>(std::llround(eta * 1.0e4));
+    ULong64_t phiBits = static_cast<ULong64_t>(std::llround(phi * 1.0e4));
+    ULong64_t mixed = (event * 2654435761ULL)
+                     ^ (etaBits * 40503ULL)
+                     ^ (phiBits * 2246822519ULL);
+    // Avoid seed 0 (TRandom3 treats 0 as "seed from clock/entropy", which
+    // would defeat determinism).
+    UInt_t seed = static_cast<UInt_t>(mixed & 0xFFFFFFFFULL);
+    return seed == 0 ? 1u : seed;
+}
+}
+
+double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double eta, double phi, double rho,
+                                 ULong64_t event, const std::string& jer_tag) const {
+    // jer_sf_/jer_sfunc_ evaluate({eta, pt}) - confirmed by directly
+    // inspecting jet_jerc.json.gz: this is a plain 2-real-input schema, NOT
+    // {eta, systematic_string} as originally assumed here. Up/down variations
+    // come from a SEPARATE SFUncertainty correction, combined arithmetically
+    // (sf*(1+-unc)) - matches the CMS JERC tutorial's Applier::jerFactor.
+    double sf = jer_sf_->evaluate({eta, reco_pt});
+    if (jer_sfunc_ && jer_tag != "nominal") {
+        double sfUnc = jer_sfunc_->evaluate({eta, reco_pt});
+        if (jer_tag == "up")        sf = sf * (1.0 + sfUnc);
+        else if (jer_tag == "down") sf = sf * (1.0 - sfUnc);
+    }
     double resolution = jer_->evaluate({eta, reco_pt, rho});
 
-    if (gen_pt > 0.0) {
+    if (jer_smear_) {
+        // CMS's official "JERSmear" correctionlib tool - handles the hybrid
+        // method decision (scaling vs. stochastic, including its own
+        // 3-sigma gen-pt consistency check) and the actual random smearing
+        // internally via a deterministic `hashprng` node. Input order per
+        // the CMS JERC ApplicationTutorial's Applier::jerFactor: JetPt,
+        // JetEta, GenPt (-1 if no match), Rho, EventID, JER (resolution), JERSF.
+        double smear = jer_smear_->evaluate({reco_pt, eta, gen_pt, rho,
+                                              static_cast<int>(event), resolution, sf});
+        double corr = (std::isfinite(smear) && smear > 0.0) ? smear : 1.0;
+        return std::max(0.0, reco_pt * corr);
+    }
+
+    // Fallback (jer_smear_ not loaded - see constructor warning): an in-house
+    // reimplementation of the same hybrid method. Not the officially
+    // recommended approach (no access to correctionlib's own hashprng
+    // internals), but functional and deterministic via a local per-(event,
+    // jet) seeded TRandom3 rather than the shared global gRandom.
+    bool useScaling = (gen_pt >= 0.0) &&
+                      (std::abs(reco_pt - gen_pt) < 3.0 * resolution * reco_pt);
+
+    if (useScaling) {
         double delta_pt = reco_pt - gen_pt;
         double smeared_pt = gen_pt + sf * delta_pt;
         return std::max(0.0, smeared_pt);
     }
 
-    double smear_factor = 1.0 + std::sqrt(sf * sf - 1.0) * gRandom->Gaus(0, 1) * resolution;
+    // sf can be < 1 in some eta/pt bins (MC resolution needs to be improved,
+    // i.e. scaled down to match data) - clamp to 0 rather than letting
+    // sf*sf-1 go negative and produce NaN from sqrt().
+    double stochasticTerm = std::sqrt(std::max(sf * sf - 1.0, 0.0));
+    TRandom3 rnd(ComputeJerSeed(event, eta, phi));
+    double smear_factor = 1.0 + stochasticTerm * rnd.Gaus(0, 1) * resolution;
     return std::max(0.0, reco_pt * smear_factor);
-}
-
-TLorentzVector SSBCorrections::RecomputeMET(double raw_met_pt, double raw_met_phi,
-                                            const std::vector<TLorentzVector>& rawJets,
-                                            const std::vector<TLorentzVector>& corrJets) const {
-    // Convert raw MET to px, py components
-    double met_px = raw_met_pt * std::cos(raw_met_phi);
-    double met_py = raw_met_pt * std::sin(raw_met_phi);
-
-    // Calculate correction in px, py only
-    for (size_t i = 0; i < rawJets.size(); ++i) {
-        // Add back the difference in transverse momentum
-        // (raw jet was subtracted from original MET, now we subtract corrected jet)
-        met_px += (rawJets[i].Px() - corrJets[i].Px());
-        met_py += (rawJets[i].Py() - corrJets[i].Py());
-    }
-
-    // Create corrected MET with mass = 0
-    double corrected_met_pt = std::sqrt(met_px * met_px + met_py * met_py);
-    double corrected_met_phi = std::atan2(met_py, met_px);
-
-    TLorentzVector correctedMET;
-    correctedMET.SetPtEtaPhiM(corrected_met_pt, 0, corrected_met_phi, 0);
-
-    return correctedMET;
 }
 
 float SSBCorrections::GetPUJetIDSFAndEff(float pt, float eta, bool passPU, bool genMatched, const std::string& wp, const std::string& syst, bool getEff) const {
@@ -700,7 +933,7 @@ float SSBCorrections::MatchGenPt(const TLorentzVector& reco_jet,
     return matched_genpt;
 }
 
-JetCorrectionOutput SSBCorrections::ApplyJetCorrectionsWithMET(
+std::vector<TLorentzVector> SSBCorrections::ApplyJetCorrections(
     const std::vector<TLorentzVector>& rawJets,
     const std::vector<float>& rawFactors,
     const std::vector<float>& areas,
@@ -708,16 +941,13 @@ JetCorrectionOutput SSBCorrections::ApplyJetCorrectionsWithMET(
     bool isData,
     bool applyJES,
     bool applyJER,
-    double raw_met_pt,
-    double raw_met_phi,
     const std::vector<TLorentzVector>& genJets,
-    const std::vector<int>& genJetIndices
+    const std::vector<int>& genJetIndices,
+    unsigned int run_number,
+    ULong64_t event_number
 ) const {
     std::vector<TLorentzVector> correctedJets;
-    std::vector<TLorentzVector> rawJetsRebuilt;
-
     correctedJets.reserve(rawJets.size());
-    rawJetsRebuilt.reserve(rawJets.size());
 
     for (size_t i = 0; i < rawJets.size(); ++i) {
         double eta  = rawJets[i].Eta();
@@ -726,25 +956,39 @@ JetCorrectionOutput SSBCorrections::ApplyJetCorrectionsWithMET(
         double raw_pt   = rawJets[i].Pt() * (1.0 - rawFactors[i]);
         double raw_mass = rawJets[i].M()  * (1.0 - rawFactors[i]);
 
-        TLorentzVector raw_jet;
-        raw_jet.SetPtEtaPhiM(raw_pt, eta, phi, raw_mass);
-        rawJetsRebuilt.push_back(raw_jet);
-
         double corrected_pt = raw_pt;
         double corrected_mass = raw_mass;
 
         if (applyJES) {
-            corrected_pt   = GetCorrectedJetPt(raw_pt, eta, areas[i], rho);
-            corrected_mass = GetCorrectedJetMass(raw_mass, raw_pt, eta, areas[i], rho);
+            corrected_pt   = GetCorrectedJetPt(raw_pt, eta, areas[i], rho, run_number);
+            corrected_mass = GetCorrectedJetMass(raw_mass, raw_pt, eta, areas[i], rho, run_number);
         }
 
-        if (!isData && applyJER && genJetIndices.size() > i && genJetIndices[i] >= 0 && genJetIndices[i] < genJets.size()) {
-            float matched_genpt = genJets[genJetIndices[i]].Pt();
-            corrected_pt = SmearJER(corrected_pt, matched_genpt, eta, rho, "nominal");
+        // Snapshot the pt BEFORE JER smearing so the mass-rescaling below only
+        // folds in the JER-specific ratio, not the JEC factor a second time.
+        // (Bug found 2026-08: this used to divide by raw_pt instead of
+        // pt_before_jer, so corrected_mass ended up carrying jec_sf^2 *
+        // jer_ratio instead of jec_sf * jer_ratio - i.e. the JEC scale factor
+        // was silently squared into the jet mass whenever applyJES was on,
+        // pre-dating this session's other JEC/JER fixes.)
+        double pt_before_jer = corrected_pt;
+
+        if (!isData && applyJER) {
+            // Always smear (previously this block only ran when a valid gen
+            // match existed, silently skipping JER entirely otherwise). Pass
+            // -1.0 as the "no gen match" sentinel when Jet_genJetIdx has no
+            // valid entry for this jet - SmearJER() falls back to stochastic
+            // smearing in that case rather than leaving the jet unsmeared.
+            float matched_genpt = -1.0;
+            if (genJetIndices.size() > i && genJetIndices[i] >= 0 &&
+                static_cast<size_t>(genJetIndices[i]) < genJets.size()) {
+                matched_genpt = genJets[genJetIndices[i]].Pt();
+            }
+            corrected_pt = SmearJER(corrected_pt, matched_genpt, eta, phi, rho, event_number, "nominal");
         }
 
-        if (raw_pt > 0) {
-            corrected_mass *= (corrected_pt / raw_pt);
+        if (pt_before_jer > 0) {
+            corrected_mass *= (corrected_pt / pt_before_jer);
         }
 
         TLorentzVector corr_jet;
@@ -752,31 +996,134 @@ JetCorrectionOutput SSBCorrections::ApplyJetCorrectionsWithMET(
         correctedJets.push_back(corr_jet);
     }
 
-    TLorentzVector correctedMET = RecomputeMET(raw_met_pt, raw_met_phi, rawJetsRebuilt, correctedJets);
-    JetCorrectionOutput result;
+    return correctedJets;
+}
 
-    result.corrected_jets = correctedJets;
-    result.corrected_met  = correctedMET;
+TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
+    double raw_met_pt,
+    double raw_met_phi,
+    const std::vector<TLorentzVector>& jetsAsStored,
+    const std::vector<float>& jetRawFactors,
+    const std::vector<float>& jetAreas,
+    const std::vector<float>& jetMuonSubtrFactors,
+    const std::vector<float>& jetChEmEF,
+    const std::vector<float>& jetNeEmEF,
+    const std::vector<float>& corrT1RawPt,
+    const std::vector<float>& corrT1Eta,
+    const std::vector<float>& corrT1Phi,
+    const std::vector<float>& corrT1Area,
+    const std::vector<float>& corrT1MuonSubtrFactor,
+    float rho,
+    bool isData,
+    bool applyJES,
+    bool applyJER,
+    const std::vector<TLorentzVector>& genJets,
+    unsigned int run_number,
+    ULong64_t event_number
+) const {
+    double met_px = raw_met_pt * std::cos(raw_met_phi);
+    double met_py = raw_met_pt * std::sin(raw_met_phi);
 
-    return result;
+    // Shared per-jet logic, confirmed against the CMS JERC tutorial's
+    // Applier::correctedMet(): muon-subtract the raw pt, apply JES/JER
+    // (reusing GetCorrectedJetPt/GetL1CorrectedJetPt/SmearJER so this can't
+    // silently drift out of sync with the physics-jet path), require the
+    // Type-1 selection (corrected pt>15, |eta|<5.2, chEmEF+neEmEF<0.90), and
+    // accumulate the (L1only_no_mu - corrected_no_mu) differential into MET -
+    // NOT (raw_no_mu - corrected_no_mu), which was the bug in an earlier
+    // version of this function (and was also present in the old fused
+    // ApplyJetCorrectionsWithMET/RecomputeMET path, now removed entirely -
+    // this function is the sole MET computation).
+    auto accumulate = [&](double eta, double phi, double rawPtRaw, double area,
+                          double muonSubtrFactor, double chEmEF, double neEmEF) {
+        double rawPtNoMu = rawPtRaw * (1.0 - muonSubtrFactor);
+        if (rawPtNoMu <= 0.0) return;
+
+        double l1PtNoMu = rawPtNoMu;
+        double corrPtNoMu = rawPtNoMu;
+        if (applyJES) {
+            l1PtNoMu   = GetL1CorrectedJetPt(rawPtNoMu, eta, area, rho);
+            corrPtNoMu = GetCorrectedJetPt(rawPtNoMu, eta, area, rho, run_number);
+        }
+        if (!isData && applyJER) {
+            TLorentzVector recoJet4v;
+            recoJet4v.SetPtEtaPhiM(rawPtNoMu, eta, phi, 0.0);
+            // -1.0 sentinel handled inside SmearJER as "no gen match" (falls
+            // back to stochastic smearing) if MatchGenPt finds nothing within maxDR.
+            // NOTE (from the tutorial's own README to-do list): CorrT1METJet_
+            // has no genJetIdx branch, so this dR-based rematch is the same
+            // acknowledged-imperfect approach the official tutorial itself
+            // uses for those jets - not something specific to our code.
+            float matchedGenPt = MatchGenPt(recoJet4v, genJets, 0.2f);
+            corrPtNoMu = SmearJER(corrPtNoMu, matchedGenPt, eta, phi, rho, event_number, "nominal");
+        }
+
+        // Type-1 selection cut (CMS JERC tutorial's JvmApplication-adjacent
+        // correctedMet() logic) - only jets passing this contribute to MET.
+        bool passSel = (corrPtNoMu > 15.0) && (std::abs(eta) < 5.2) && ((chEmEF + neEmEF) < 0.90);
+        if (!passSel) return;
+
+        met_px += (l1PtNoMu - corrPtNoMu) * std::cos(phi);
+        met_py += (l1PtNoMu - corrPtNoMu) * std::sin(phi);
+    };
+
+    // Regular Jet_ branch jets: jetsAsStored holds the NanoAOD-stored
+    // (already centrally-corrected) pt, so undo rawFactor first to get the
+    // true raw pt - same convention as ApplyJetCorrections.
+    for (size_t i = 0; i < jetsAsStored.size(); ++i) {
+        double rawFactor = (i < jetRawFactors.size()) ? jetRawFactors[i] : 0.0f;
+        double area       = (i < jetAreas.size())       ? jetAreas[i]       : 0.5f;
+        double muonSubtr  = (i < jetMuonSubtrFactors.size()) ? jetMuonSubtrFactors[i] : 0.0f;
+        double chEmEF     = (i < jetChEmEF.size())      ? jetChEmEF[i]      : 0.0f;
+        double neEmEF     = (i < jetNeEmEF.size())      ? jetNeEmEF[i]      : 0.0f;
+        double rawPtRaw   = jetsAsStored[i].Pt() * (1.0 - rawFactor);
+        accumulate(jetsAsStored[i].Eta(), jetsAsStored[i].Phi(), rawPtRaw, area, muonSubtr, chEmEF, neEmEF);
+    }
+
+    // Low-pT CorrT1METJet_ branch jets: rawPt is already raw (no rawFactor to
+    // undo). No EM-fraction branches exist for these (too low-pT to have
+    // them produced) - pass 0/0, same as the CMS JERC tutorial's
+    // CollectJetMet.hpp ("EM fractions are not provided for CorrT1METJet;
+    // set to zero explicitly").
+    for (size_t i = 0; i < corrT1RawPt.size(); ++i) {
+        double area      = (i < corrT1Area.size())               ? corrT1Area[i]               : 0.5f;
+        double muonSubtr = (i < corrT1MuonSubtrFactor.size())    ? corrT1MuonSubtrFactor[i]    : 0.0f;
+        accumulate(corrT1Eta[i], corrT1Phi[i], corrT1RawPt[i], area, muonSubtr, 0.0, 0.0);
+    }
+
+    double corrected_met_pt  = std::sqrt(met_px * met_px + met_py * met_py);
+    double corrected_met_phi = std::atan2(met_py, met_px);
+
+    TLorentzVector correctedMET;
+    correctedMET.SetPtEtaPhiM(corrected_met_pt, 0, corrected_met_phi, 0);
+    return correctedMET;
 }
 
 
-bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet) const {
+bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet, double chEmEF, double neEmEF) const {
     // Only apply for 2018 data/MC
     if (year_ != "2018") {
         return false;
     }
-    
+
     // Check if jetvetomap is loaded
     if (!jetvetomap_) {
         std::cerr << "[WARNING] Jet veto map not loaded, skipping HEM veto" << std::endl;
         return false;
     }
-    
+
+    // Pre-selection cut confirmed from the CMS JERC tutorial's
+    // JvmApplication::VetoChecker (kMaxEmFrac = 0.90) - pt/jetId pre-selection
+    // are already applied at the only call site (Analysis::JetSelector)
+    // before ShouldVetoJet() is invoked, so only the EM-fraction cut is
+    // checked here.
+    if ((chEmEF + neEmEF) >= 0.90) {
+        return false;
+    }
+
     float eta = jet.Eta();
     float phi = jet.Phi();
-    
+
     try {
         // Use configured key
         std::variant<double, std::vector<double>> val = jetvetomap_->evaluate({
@@ -812,26 +1159,46 @@ void SSBCorrections::InitBtagSFCorrection(const std::string& json_path,
     std::cout << "[SSBCorrections] Loading b-tagging SF from JSON: " << json_path << std::endl;
     
     auto cset = correction::CorrectionSet::from_file(json_path);
-    
-    // Heavy flavor correction name (config-based selection)
-    std::string heavy_flavor_name = tagger_name;  // e.g., "deepJet_comb"
-    
-    // Replace "comb" with config-specified type
-    size_t pos = heavy_flavor_name.find("comb");
-    if (pos != std::string::npos) {
-        heavy_flavor_name.replace(pos, 4, btag_sf_type_);
-    } else {
-        std::cerr << "[ERROR] Expected 'comb' in tagger_name: " << tagger_name << std::endl;
-        return;
-    }
-    
-    // Light flavor correction name (always "incl")
+
+    // UParT's btagging.json.gz (confirmed by directly inspecting the file)
+    // only ships ONE heavy-flavor SF, named "UParTAK4_comb" (no per-BTagSFType
+    // "..._mujets" variant the way DeepJet/DeepCSV do), and names its
+    // light-flavor SF "UParTAK4_light" instead of "..._incl". Detected here by
+    // the tagger_name prefix, since that already fully identifies which
+    // scheme is in play (constructor already built it as exactly
+    // "UParTAK4_comb" for this case - see there).
+    bool isUParT = (tagger_name.rfind("UParTAK4", 0) == 0);
+
+    std::string heavy_flavor_name = tagger_name;  // e.g., "deepJet_comb" or "UParTAK4_comb"
     std::string light_flavor_name = tagger_name;
-    pos = light_flavor_name.find("comb");
-    if (pos != std::string::npos) {
-        light_flavor_name.replace(pos, 4, "incl");
+
+    if (isUParT) {
+        // heavy_flavor_name is already the exact correction name as-is
+        // ("UParTAK4_comb"); only the light-flavor suffix needs swapping.
+        size_t pos = light_flavor_name.find("comb");
+        if (pos != std::string::npos) {
+            light_flavor_name.replace(pos, 4, "light");
+        } else {
+            std::cerr << "[ERROR] Expected 'comb' in tagger_name: " << tagger_name << std::endl;
+            return;
+        }
+    } else {
+        // Heavy flavor correction name (config-based selection)
+        size_t pos = heavy_flavor_name.find("comb");
+        if (pos != std::string::npos) {
+            heavy_flavor_name.replace(pos, 4, btag_sf_type_);
+        } else {
+            std::cerr << "[ERROR] Expected 'comb' in tagger_name: " << tagger_name << std::endl;
+            return;
+        }
+
+        // Light flavor correction name (always "incl")
+        pos = light_flavor_name.find("comb");
+        if (pos != std::string::npos) {
+            light_flavor_name.replace(pos, 4, "incl");
+        }
     }
-    
+
     // Load corrections with generic keys
     btag_corrections_["heavy"] = cset->at(heavy_flavor_name);
     btag_corrections_["light"] = cset->at(light_flavor_name);
@@ -1132,7 +1499,8 @@ double SSBCorrections::GetTrgEff(double pt1, double pt2, TString Sys_) {
     return trgsf + trgsferr;
 }
 
-std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, const std::string runPeriod, const std::string& era, bool is_data) {
+std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, const std::string runPeriod, const std::string& era, bool is_data,
+                                           const std::string& jetAlgo, const std::string& jecLevel) {
     //  "Summer19UL16_v7" -> prefix = "Summer19UL16", version = "7"
     size_t pos = base_jec_name.find("_V");
     if (pos == std::string::npos) {
@@ -1142,11 +1510,33 @@ std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, cons
 
     std::string prefix = base_jec_name.substr(0, pos);             // "Summer19UL16"
     std::string version = base_jec_name.substr(pos + 2);           // "7"
-    std::string suffix = "_L1L2L3Res_AK4PFchs";
+    // Was hardcoded to "_L1L2L3Res_AK4PFchs" - NanoAODv15's Jet_ collection is
+    // AK4 Puppi, not PFchs, so this now comes from the caller (config-driven:
+    // JetAlgoTag/JECLevel), defaulting to the Puppi values. See the CMS CAT
+    // jet_jerc.json.gz correction names (e.g. "..._L1FastJet_AK4PFPuppi",
+    // "..._L2Relative_AK4PFPuppi") - if the compound correction there isn't
+    // literally named "..._L1L2L3Res_AK4PFPuppi", set JECLevel in the config
+    // to whatever the actual compound entry is called instead.
+    std::string suffix = "_" + jecLevel + "_" + jetAlgo;
 
     std::string expanded = prefix;  // prefix
 
-    // Year-specific logic
+    // Confirmed from the user's jet_jerc.json.gz screenshot: the v15 Puppi
+    // compound corrections are named e.g.
+    // "Summer20UL18NanoV15_V1_DATA_L1L2L3Res_AK4PFPuppi" - a SINGLE name for
+    // all of 2018 data, with no per-era ("_RunA"/"_RunB"/...) component. The
+    // DATA compound's declared inputs also included "run" (a 5th evaluate()
+    // input beyond area/eta/pt/rho - see jec_needs_run_), meaning era
+    // resolution now happens *inside* the correction from the run number,
+    // not via the correction *name* as in the old v9/PFchs scheme below. So:
+    // skip the whole per-era name-building chain for Puppi jets; only do it
+    // for PFchs (kept for v9 compatibility / in case some other campaign's
+    // Puppi json still uses the old per-era-name convention).
+    bool useEraInName = (jetAlgo.find("Puppi") == std::string::npos);
+
+    // Year-specific logic (only for the old v9/PFchs per-era-name convention -
+    // see useEraInName above)
+    if (useEraInName) {
     if (runPeriod.find("16Pre") != std::string::npos) {
         if (is_data) {
             if (era == "B" || era == "C" || era == "D") {
@@ -1187,11 +1577,11 @@ std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, cons
             } else if (era == "E") {
                 expanded += "_RunE";
             } else if (era == "F") {
-                expanded += "_RunF"; 
+                expanded += "_RunF";
             } else {
-                expanded += "_RunB"; 
+                expanded += "_RunB";
             }
-        
+
         }
     } else if (runPeriod.find("2018") != std::string::npos) {
         if (is_data) {
@@ -1204,10 +1594,11 @@ std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, cons
             } else if (era == "D") {
                 expanded += "_RunD";
             } else {
-                expanded += "_RunB"; 
+                expanded += "_RunB";
             }
         }
     }
+    } // end useEraInName
 
     // Add version and data/MC tag
     expanded += "_V" + version + "_";

@@ -1,25 +1,3 @@
-# NanoAODv15 branch list for SSBNanoAODANCode.
-#
-# The dataType/varType columns are now only a fallback hint - Analysis::InitBranches()
-# auto-detects the real type and single/vector structure from the TChain itself, so
-# they no longer need to be exact. What DOES need to be exact is the branch NAME,
-# since a few branches were renamed (not just retyped) going from v9 to v15:
-#   fixedGridRhoFastjetAll -> Rho_fixedGridRhoFastjetAll
-#   MET_pt / MET_phi       -> PFMET_pt / PFMET_phi   (Analysis.cpp tries both names)
-#   Electron_mvaFall17V2Iso*     -> Electron_mvaIso*
-#   Electron_mvaFall17V2noIso*   -> Electron_mvaNoIso*
-#
-# Removed with no direct successor (see conversion notes):
-#   Jet_jetId   -> gone. Replaced by PassJetIdTight()/PassJetIdTightLepVeto() in
-#                  Analysis.cpp, computed from the energy-fraction branches below.
-#   Jet_puId    -> gone (only the continuous Jet_puIdDisc remains, no correctionlib
-#                  SF yet). Analysis.cpp auto-disables PU-jet-ID if this line is absent.
-#   Jet_btagCSVV2 / Jet_btagDeepB / Jet_btagDeepCvB / Jet_btagDeepCvL -> gone (DeepCSV
-#                  retired). Use Jet_btagDeepFlavB/CvB/CvL/QG (DeepJet) or the new
-#                  Jet_btagPNet*/Jet_btagUParTAK4* taggers. Make sure your v15 configs
-#                  set Jet_btag = deepJet (or a PNet/UParT WP you've added support for).
-#   Muon_mvaTTH / Muon_mvaId / Muon_mvaLowPtId -> gone, no direct successor used here.
-
 run, run, UInt_t, single
 Generator_weight, Generator, Float_t, single
 GenPart_pt, Generator, Float_t, vector
@@ -35,7 +13,7 @@ HLT_Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ, trigger, Bool_t, single
 HLT_Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL, trigger, Bool_t, single
 HLT_Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL_DZ, trigger, Bool_t, single
 HLT_Mu12_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL, trigger, Bool_t, single
-nMuon, muon, Int_t, single
+nMuon, muon, UInt_t, single
 Muon_pfRelIso03_all, muon, Float_t, vector
 Muon_pfRelIso03_chg, muon, Float_t, vector
 Muon_pfRelIso04_all, muon, Float_t, vector
@@ -60,6 +38,7 @@ Muon_softMva, muon, Float_t, vector
 Muon_tkRelIso, muon, Float_t, vector
 Muon_tunepRelPt, muon, Float_t, vector
 Muon_mvaLowPt, muon, Float_t, vector
+Muon_mvaTTH, muon, Float_t, vector
 Muon_tightId, muon, Bool_t, vector
 Muon_looseId, muon, Bool_t, vector
 Muon_mediumId, muon, Bool_t, vector
@@ -73,43 +52,42 @@ Muon_isTracker, muon, Bool_t, vector
 Muon_softId, muon, Bool_t, vector
 Muon_softMvaId, muon, Bool_t, vector
 Muon_charge, muon, Int_t, vector
-Muon_jetIdx, muon, Short_t, vector
-Muon_nStations, muon, UChar_t, vector
-Muon_nTrackerLayers, muon, UChar_t, vector
+Muon_jetIdx, muon, Int_t, vector
+Muon_nStations, muon, Int_t, vector
+Muon_nTrackerLayers, muon, Int_t, vector
 Muon_pdgId, muon, Int_t, vector
-Muon_tightCharge, muon, UChar_t, vector
-Muon_fsrPhotonIdx, muon, Short_t, vector
+Muon_tightCharge, muon, Int_t, vector
+Muon_fsrPhotonIdx, muon, Int_t, vector
 Muon_highPtId, muon, UChar_t, vector
 Muon_jetNDauCharged, muon, UChar_t, vector
 Muon_miniIsoId, muon, UChar_t, vector
 Muon_multiIsoId, muon, UChar_t, vector
+Muon_mvaId, muon, UChar_t, vector
+Muon_mvaLowPtId, muon, UChar_t, vector
 Muon_pfIsoId, muon, UChar_t, vector
 Muon_puppiIsoId, muon, UChar_t, vector
-Muon_genPartIdx, muon, Short_t, vector
-nJet, jet, Int_t, single
+Muon_genPartIdx, muon, Int_t, vector
+nJet, jet, UInt_t, single
 Jet_pt, jet, Float_t, vector
 Jet_phi, jet, Float_t, vector
 Jet_eta, jet, Float_t, vector
 Jet_mass, jet, Float_t, vector
+Jet_jetId, jet, Int_t, vector
 Jet_puId, jet, Int_t, vector
 Jet_area, jet, Float_t, vector
 Jet_rawFactor, jet, Float_t, vector
+Jet_btagCSVV2, jet, Float_t, vector
+Jet_btagDeepB, jet, Float_t, vector
+Jet_btagDeepCvB, jet, Float_t, vector
+Jet_btagDeepCvL, jet, Float_t, vector
 Jet_btagDeepFlavB, jet, Float_t, vector
 Jet_btagDeepFlavCvB, jet, Float_t, vector
 Jet_btagDeepFlavCvL, jet, Float_t, vector
 Jet_btagDeepFlavQG, jet, Float_t, vector
-Jet_hadronFlavour, jet, UChar_t, vector
-Jet_genJetIdx, jet, Short_t, vector
-# --- new: needed to reconstruct the tight/tightLepVeto jet ID (Jet_jetId is gone) ---
-Jet_neHEF, jet, Float_t, vector
-Jet_neEmEF, jet, Float_t, vector
-Jet_chHEF, jet, Float_t, vector
-Jet_chEmEF, jet, Float_t, vector
-Jet_muEF, jet, Float_t, vector
-Jet_chMultiplicity, jet, UChar_t, vector
-Jet_neMultiplicity, jet, UChar_t, vector
-Rho_fixedGridRhoFastjetAll, Jet, Float_t, single
-nGenJet, genjet, Int_t, single
+Jet_hadronFlavour, jet, Int_t, vector
+Jet_genJetIdx, jet, Int_t, vector
+fixedGridRhoFastjetAll, Jet, Float_t, single
+nGenJet, genjet, UInt_t, single
 GenJet_pt, genjet, Float_t, vector
 GenJet_phi, genjet, Float_t, vector
 GenJet_eta, genjet, Float_t, vector
@@ -119,19 +97,16 @@ Electron_phi, electron, Float_t, vector
 Electron_eta, electron, Float_t, vector
 Electron_mass, electron, Float_t, vector
 Electron_deltaEtaSC, electron, Float_t, vector
-Electron_tightCharge, electron, UChar_t, vector
+Electron_tightCharge, electron, Int_t, vector
 Electron_charge, electron, Int_t, vector
-Electron_cutBased, electron, UChar_t, vector
+Electron_cutBased, electron, Int_t, vector
 Electron_convVeto, electron, Bool_t, vector
-Electron_mvaNoIso_WP90, electron, Bool_t, vector
-Electron_mvaIso_WPL, electron, Bool_t, vector
-Electron_mvaIso_WP90, electron, Bool_t, vector
-Electron_mvaIso_WP80, electron, Bool_t, vector
+Electron_mvaFall17V2noIso_WP90, electron, Bool_t, vector
 Electron_pfRelIso03_all, electron, Float_t, vector
-Electron_mvaIso, electron, Float_t, vector
-nElectron, electron, Int_t, single
-PFMET_pt, met, Float_t, single
-PFMET_phi, met, Float_t, single
+Electron_mvaFall17V2Iso, electron, Float_t, vector
+nElectron, electron, UInt_t, single
+MET_pt, met, Float_t, single
+MET_phi, met, Float_t, single
 PuppiMET_pt, met, Float_t, single
 PuppiMET_phi, met, Float_t, single
 Flag_HBHENoiseFilter, metfilter, Bool_t, single
@@ -167,8 +142,8 @@ PV_y, PV, Float_t, single
 PV_z, PV, Float_t, single
 PV_chi2, PV, Float_t, single
 PV_score, PV, Float_t, single
-PV_npvs, PV, UChar_t, single
-PV_npvsGood, PV, UChar_t, single
+PV_npvs, PV, Int_t, single
+PV_npvsGood, PV, Int_t, single
 Pileup_nTrueInt, Pileup, Float_t, single
 L1PreFiringWeight_Nom, L1PreFiring, Float_t, single
 L1PreFiringWeight_Up, L1PreFiring, Float_t, single

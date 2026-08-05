@@ -21,6 +21,15 @@
 #   Muon_mvaTTH / Muon_mvaId / Muon_mvaLowPtId -> gone, no direct successor used here.
 
 run, run, UInt_t, single
+# event/luminosityBlock: added because branchReader_.ulongSingles["event"] and
+# branchReader_.uintSingles["luminosityBlock"] are read directly in Analysis.cpp
+# (CP-observable blinding seed for data, and now also the JER smearing seed -
+# see SmearJER) but neither branch was actually present in the original v9
+# branch_list.txt either - a pre-existing latent bug (only triggered when
+# isBlind=true for data) that would null-pointer-dereference/crash. Fixed here
+# as a byproduct of wiring in a deterministic per-event JER seed.
+event, event, ULong64_t, single
+luminosityBlock, event, UInt_t, single
 Generator_weight, Generator, Float_t, single
 GenPart_pt, Generator, Float_t, vector
 HLT_IsoMu24, trigger, Bool_t, single
@@ -94,10 +103,16 @@ Jet_mass, jet, Float_t, vector
 Jet_puId, jet, Int_t, vector
 Jet_area, jet, Float_t, vector
 Jet_rawFactor, jet, Float_t, vector
+# muonSubtrFactor: needed for a complete Type-1 MET recipe (avoids
+# double-counting a muon's momentum in MET, since PF muons are already
+# handled directly in MET rather than via jet energy) - see
+# SSBCorrections::ApplyType1METWithCorrT1 in Analysis.cpp/MakeJetCollection.
+Jet_muonSubtrFactor, jet, Float_t, vector
 Jet_btagDeepFlavB, jet, Float_t, vector
 Jet_btagDeepFlavCvB, jet, Float_t, vector
 Jet_btagDeepFlavCvL, jet, Float_t, vector
 Jet_btagDeepFlavQG, jet, Float_t, vector
+Jet_btagUParTAK4B, jet, Float_t, vector
 Jet_hadronFlavour, jet, UChar_t, vector
 Jet_genJetIdx, jet, Short_t, vector
 # --- new: needed to reconstruct the tight/tightLepVeto jet ID (Jet_jetId is gone) ---
@@ -109,6 +124,19 @@ Jet_muEF, jet, Float_t, vector
 Jet_chMultiplicity, jet, UChar_t, vector
 Jet_neMultiplicity, jet, UChar_t, vector
 Rho_fixedGridRhoFastjetAll, Jet, Float_t, single
+# CorrT1METJet_*: NanoAOD's dedicated branch for jets BELOW the Jet_
+# collection's storage pT threshold (so they're missing from Jet_pt entirely)
+# that still need to be included for a complete Type-1 MET recomputation -
+# per the CMS JERC tutorial, these must be added to Jet_'s contribution or
+# MET propagation is incomplete whenever your own JEC differs from the
+# central/nominal one. No genJetIdx branch exists for these (too low-pT to
+# have one produced) - matched to GenJet_ via dR<0.2 instead, same as the
+# tutorial's approach.
+CorrT1METJet_area, corrT1met, Float_t, vector
+CorrT1METJet_eta, corrT1met, Float_t, vector
+CorrT1METJet_phi, corrT1met, Float_t, vector
+CorrT1METJet_rawPt, corrT1met, Float_t, vector
+CorrT1METJet_muonSubtrFactor, corrT1met, Float_t, vector
 nGenJet, genjet, Int_t, single
 GenJet_pt, genjet, Float_t, vector
 GenJet_phi, genjet, Float_t, vector
@@ -134,6 +162,19 @@ PFMET_pt, met, Float_t, single
 PFMET_phi, met, Float_t, single
 PuppiMET_pt, met, Float_t, single
 PuppiMET_phi, met, Float_t, single
+# RawMET_pt/RawPuppiMET_pt: the genuinely UNCORRECTED MET, needed as the
+# starting point for Type-1 MET recomputation (ApplyType1METWithCorrT1).
+# MET_pt/PFMET_pt/PuppiMET_pt above are already Type-1-corrected using
+# whatever JEC/JER was baked in at NanoAOD production time - using those as
+# the "raw" input would double-apply a Type-1 correction instead of properly
+# rebuilding it with the new JEC/JER. Confirmed from the CMS JERC tutorial
+# (InputNanoReader.hpp reads RawMET_pt/RawPuppiMET_pt as separate branches
+# from MET_pt/PuppiMET_pt; applyJecAndJvm.C uses the Raw* ones as MetInputs).
+# This branch name is NOT renamed between v9/v15 (unlike MET_pt->PFMET_pt).
+RawMET_pt, met, Float_t, single
+RawMET_phi, met, Float_t, single
+RawPuppiMET_pt, met, Float_t, single
+RawPuppiMET_phi, met, Float_t, single
 Flag_HBHENoiseFilter, metfilter, Bool_t, single
 Flag_HBHENoiseIsoFilter, metfilter, Bool_t, single
 Flag_CSCTightHaloFilter, metfilter, Bool_t, single
