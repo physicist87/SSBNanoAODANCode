@@ -330,7 +330,12 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         btag_algo = "DeepJet";
     } else if (jet_btag_conf.find("UParT") != std::string::npos) {
         // UParT (Unified Particle Transformer) AK4 b-tagger, new in NanoAODv15.
-        btag_algo = "UParT";
+        // Confirmed via a real run: your btagEff_UParTAK4.root's histograms
+        // are named "eff_UParTAK4_<flav>_<wp>", not "eff_UParT_..." (the run
+        // logged "[WARNING] Histogram not found: eff_UParT_b_Medium" etc.
+        // for all three flavors) - so this must be "UParTAK4" to match both
+        // the .root filename AND the histogram names inside it.
+        btag_algo = "UParTAK4";
     } else if (jet_btag_conf.find("pfCSVV2") != std::string::npos) {
         btag_algo = "CSVv2";
     } else {
@@ -372,7 +377,7 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         btag_tagger = reader->GetText("BTagTaggerName");
     } else if (btag_algo == "DeepJet") {
         btag_tagger = "deepJet_" + btag_sf_type_;
-    } else if (btag_algo == "UParT") {
+    } else if (btag_algo == "UParTAK4") {
         // Confirmed from the user's actual btagging.json.gz: the corrections
         // are named "UParTAK4_comb" (b/c-jet SF) and "UParTAK4_light"
         // (light-jet SF) - NOT "particleTransformerAK4_<type>" as originally
@@ -396,26 +401,13 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     std::string btag_eff_path = "";
     if (!is_data) {
         std::string process_subdir = GetProcessSubDir(inputfileName);
-        // File-naming ONLY fix: your actual efficiency ROOT files are named
-        // "btagEff_UParTAK4.root", not "btagEff_UParT.root" (confirmed via
-        // `ls CorrectionFiles/BTag/UL2018/*/`). Using a separate
-        // btag_eff_filename_algo here (rather than changing btag_algo
-        // itself) intentionally, because btag_algo is ALSO used as the
-        // in-ROOT-file histogram name prefix ("eff_" + btag_algo + "_b_...")
-        // via LoadMCBtagEfficiencies/GetMCBtagEfficiency/
-        // ComputeBTagEventWeight (and Analysis.cpp's separate btag_algo_
-        // member, which matches this same "UParT" convention) - that's an
-        // internal, self-consistent naming scheme independent of the
-        // external .root filename, and I have no way to confirm here
-        // whether the histograms INSIDE btagEff_UParTAK4.root are named
-        // "eff_UParT_b_Medium" or "eff_UParTAK4_b_Medium". If you see
-        // "[WARNING] Histogram not found: eff_UParT_..." after this fix,
-        // the histograms themselves use the AK4 suffix too - tell me and
-        // I'll change btag_algo (both here and in Analysis.cpp) to match.
-        std::string btag_eff_filename_algo = (btag_algo == "UParT") ? "UParTAK4" : btag_algo;
+        // btag_algo is now "UParTAK4" directly (see above) - matches both
+        // the .root filename (btagEff_UParTAK4.root) and, confirmed by a
+        // real run, the in-file histogram name prefix (eff_UParTAK4_b_...).
+        // No separate filename-only variable needed anymore.
         btag_eff_path = "CorrectionFiles/BTag/UL" + RunPeriod
                       + "/" + process_subdir
-                      + "/btagEff_" + btag_eff_filename_algo + ".root";
+                      + "/btagEff_" + btag_algo + ".root";
         std::cout << "[INFO] btag_eff_path: " << btag_eff_path << std::endl;
     }
 

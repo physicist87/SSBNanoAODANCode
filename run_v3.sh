@@ -50,5 +50,5 @@ for entry in "${inputlists[@]}"; do
 
     #echo "[RUN] ./ssb_analysis $inputlist $outputfile $config None $runPeriod -1 $branch_list"
     echo "[RUN] ./ssb_analysis $inputlist $outputfile ULSummer20/$runPeriod/$config None $runPeriod -1 $branch_list"
-    ./ssb_analysis "$inputlist" "$outputfile" "ULSummer20/$runPeriod/$config" "None" "$runPeriod" -1 "$branch_list"
+    ./ssb_analysis "$inputlist" "$outputfile" "ULSummer20/$runPeriod/$config" "None" "$runPeriod" 10 "$branch_list"
 done

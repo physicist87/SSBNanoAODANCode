@@ -162,6 +162,19 @@ PFMET_pt, met, Float_t, single
 PFMET_phi, met, Float_t, single
 PuppiMET_pt, met, Float_t, single
 PuppiMET_phi, met, Float_t, single
+# RawMET_pt/RawPuppiMET_pt: the genuinely UNCORRECTED MET, needed as the
+# starting point for Type-1 MET recomputation (ApplyType1METWithCorrT1).
+# MET_pt/PFMET_pt/PuppiMET_pt above are already Type-1-corrected using
+# whatever JEC/JER was baked in at NanoAOD production time - using those as
+# the "raw" input would double-apply a Type-1 correction instead of properly
+# rebuilding it with the new JEC/JER. Confirmed from the CMS JERC tutorial
+# (InputNanoReader.hpp reads RawMET_pt/RawPuppiMET_pt as separate branches
+# from MET_pt/PuppiMET_pt; applyJecAndJvm.C uses the Raw* ones as MetInputs).
+# This branch name is NOT renamed between v9/v15 (unlike MET_pt->PFMET_pt).
+RawMET_pt, met, Float_t, single
+RawMET_phi, met, Float_t, single
+RawPuppiMET_pt, met, Float_t, single
+RawPuppiMET_phi, met, Float_t, single
 Flag_HBHENoiseFilter, metfilter, Bool_t, single
 Flag_HBHENoiseIsoFilter, metfilter, Bool_t, single
 Flag_CSCTightHaloFilter, metfilter, Bool_t, single

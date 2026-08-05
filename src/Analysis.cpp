@@ -609,7 +609,11 @@ void Analysis::SetObjectVariable() {
     } else if (TString(JetbTag).Contains("deepJet")) {
         btag_algo_ = "DeepJet";
     } else if (TString(JetbTag).Contains("UParT")) {
-        btag_algo_ = "UParT";
+        // Must match SSBCorrections.cpp's btag_algo exactly - both are used
+        // as the eff-histogram name prefix "eff_<algo>_<flav>_<wp>", and a
+        // real run confirmed the histograms inside btagEff_UParTAK4.root are
+        // named with the "UParTAK4" prefix, not "UParT".
+        btag_algo_ = "UParTAK4";
     } else if (TString(JetbTag).Contains("pfCSVV2")) {
         btag_algo_ = "CSVv2";
     } else {
@@ -642,8 +646,17 @@ void Analysis::SetObjectVariable() {
     bool haveConfigBTagDiscCut = SSBConfReader->Check("BTagDiscCut");
     if (haveConfigBTagDiscCut) {
         bdisccut = configBTagDiscCut;
-        std::cout << "[INFO] Using BTagDiscCut from config: " << bdisccut << std::endl;
-    } else if (btag_algo_ == "UParT") {
+        // SetObjectVariable() runs once per EVENT (called from Loop()'s main
+        // for-loop), but BTagDiscCut is a config value that never changes
+        // during a job - print it once instead of once per event (this was
+        // spamming the log every single event, harmless for a 10-event test
+        // but unusable for a real several-million-event production run).
+        static bool printedBTagDiscCutInfo = false;
+        if (!printedBTagDiscCutInfo) {
+            std::cout << "[INFO] Using BTagDiscCut from config: " << bdisccut << std::endl;
+            printedBTagDiscCutInfo = true;
+        }
+    } else if (btag_algo_ == "UParTAK4") {
         std::cerr << "[ERROR] Jet_btag='" << JetbTag << "' (UParT) has no hardcoded working-point "
                   << "cut value, and no 'BTagDiscCut' was set in the config. Add e.g. "
                   << "'BTagDiscCut : 0.xxxx' to the config with the CMS BTV-recommended UParT "
