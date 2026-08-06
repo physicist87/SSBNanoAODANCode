@@ -54,6 +54,10 @@ This will generate the executable **`ssb_analysis`**.
 - **`main_ssb.cpp`**: The main execution file that initializes the analysis and handles input data.
 - **`src/Analysis.cpp`**: Implements core analysis functions, including event selection and variable calculations.
 - **`interface/Analysis.h`**: Defines the analysis class, including member functions and variables used for event processing.
+- **`interface/NanoAODBranchReader.h` / `src/NanoAODBranchReader.cpp`**: Owns the dynamic branch-name -> `TTreeReader` bindings for a NanoAOD `TChain` and reads them back out in a way that's resilient to storage-type changes and renames between NanoAOD versions (added for the v15 migration - see below). `Analysis` calls through this for all branch I/O instead of touching `TTreeReader` maps directly.
+- **`interface/JetID.h` / `src/JetID.cpp`**: The NanoAODv15 PUPPI jet ID (tight / tight-lepton-veto), reimplemented directly from jet energy fractions since the `Jet_jetId` bitmask no longer exists for Puppi jets. Extracted out of `Analysis` as part of an ongoing object-oriented refactor (see below).
+- **`interface/Jet.h`**: Small value-object structs (`RawJet`, `CorrT1Jet`) bundling a jet's per-event raw NanoAOD fields together, used by `Analysis::MakeJetCollection()` to read the `Jet_`/`CorrT1METJet_` collections in one pass instead of scattered per-field reads.
+- **`interface/SSBCorrections.h` / `src/SSBCorrections.cpp`**: Loads and applies all `correctionlib`-based corrections - JEC/JER/JVM, Type-1 MET, b-tagging SF, PU jet ID SF, muon/electron/trigger SF, PU weight, MET-XY correction.
 - **`CommonTools.cpp/hpp`**: Provides utility functions used across multiple parts of the analysis.
 - **`TextReader/TextReader.cpp/hpp`**: Handles reading text-based inputs for configurations or dataset lists.
 - **`configs/`**: Contains various configuration files for different datasets and analysis setups.
@@ -140,6 +144,32 @@ Muon_mass, muon, Float_t, vector
 ```
 This structure ensures that only the necessary branches are accessed, optimizing performance and reducing memory usage.
 
+For NanoAODv15 running, use `branchlist/<era>/branch_list_v15.txt` (e.g. `branchlist/UL2018/branch_list_v15.txt`) instead of the v9 `branch_list.txt` - see the next section.
+
+## NanoAODv15 Migration
+
+This branch adds support for **NanoAODv15** input (the dilepton `MuMu`/`ElEl`/`MuEl` channels) alongside the existing v9 code path, without requiring a separate copy of the analysis code. It has been verified end-to-end against a real UL2018 `TTbar_Signal` NanoAODv15 file: clean compile, full event-loop run with no crashes, all corrections loading and evaluating successfully.
+
+The single biggest driver of change is that NanoAODv15's default AK4 jet collection switched from PF+CHS (`AK4PFchs`) to **Puppi** (`AK4PFPuppi`), which cascades into JEC naming, JER, b-tagging, and the whole MET propagation chain. Highlights:
+
+- **Version-agnostic branch reading**: a new `NanoAODBranchReader` class asks the `TChain` directly for each branch's real type/structure instead of trusting a branch list's declared type, so the same code handles both v9 and v15 storage-type changes (e.g. several `Int_t`/`UInt_t` branches narrowed to `Short_t`/`UChar_t`) without per-version edits.
+- **Jet ID**: `Jet_jetId` no longer exists for Puppi jets - the POG-recommended tight/tight-lepton-veto working points are reimplemented directly from jet energy fractions (`Jet_neHEF`/`neEmEF`/`chHEF`/`chEmEF`/`muEF`/multiplicities).
+- **b-tagging**: switched from DeepCSV/DeepJet to **UParT** (Unified Particle Transformer), including automatic derivation of the numeric discriminant cut from the working-point letter alone (`Jet_btag = "UParTM"` is enough - no separate `BTagDiscCut` config value required).
+- **JEC/JER/Type-1 MET**: rebuilt to match the CMS JERC ApplicationTutorial term-for-term, including starting Type-1 MET from the genuinely uncorrected `RawMET_pt`/`RawPuppiMET_pt` (not the already-Type1-corrected `MET_pt`/`PuppiMET_pt`), muon-subtracting jets before Type-1 propagation, and including the low-pT `CorrT1METJet_` collection.
+- **cvmfs paths**: default correction-file distribution switched to CMS's new "CAT" layout (`/cvmfs/cms-griddata.cern.ch/cat/metadata/...`), with per-POG campaign-folder differences documented (not every POG needed a new v15-era folder).
+
+Only UL2018 configs/branch lists exist so far; UL2016PreVFP/UL2016PostVFP/UL2017 are not yet migrated. See `v15_migration/README.md` for the full "what changed, by area" writeup and `v15_migration/NOTES.md` for the complete, dated account of every bug found and fixed along the way (including two real physics bugs: a JEC scale factor being squared into jet mass, and Type-1 MET being built from an already-corrected MET branch instead of the genuinely raw one).
+
+## Object-Oriented Refactor (In Progress)
+
+Alongside the v15 migration, the codebase is being incrementally refactored toward clearer separation of concerns - each step compiled and run against real data before moving to the next, to keep risk low against an already-verified physics pipeline. Completed so far:
+
+1. **Stringly-typed dispatch -> enum + shared helper**: a `BTagAlgo` enum (`interface/SSBCorrections.h`) replaced two independently-maintained string-parsing blocks (in `SSBCorrections.cpp` and `Analysis.cpp`) that had already drifted out of sync once in practice. A generic `LoadOptionalCorrection<T>()` template replaced 6 near-identical try/catch blocks for optional `correctionlib` loads.
+2. **`JetID` class** (`interface/JetID.h`, `src/JetID.cpp`): the NanoAODv15 PUPPI jet ID logic, pulled out of `Analysis` (see above).
+3. **`Jet` value object** (`interface/Jet.h`): `RawJet`/`CorrT1Jet` structs consolidating `Analysis::MakeJetCollection()`'s per-jet raw reads into a single pass, instead of scattered/duplicated bounds-checked array access. `SSBCorrections`' own jet-correction/MET function signatures were deliberately left unchanged in this step, since that code is the most carefully tutorial-verified part of the migration.
+
+Planned next: splitting `SSBCorrections` into per-domain classes (JEC/JER, Type-1 MET, b-tag SF, PU jet ID, lepton SF) behind a facade that preserves its current public interface, and parametrizing systematic variation (nominal/up/down) instead of ad hoc flags. See `v15_migration/NOTES.md` items 26-28 for the full rationale behind each step.
+
 ## Notes
 - Ensure that ROOT is properly installed and configured before running the analysis.
 - Modify `Makefile` if necessary to match your system's compiler settings.
@@ -150,4 +180,3 @@ For questions or contributions, please open an issue or contact the maintainers.
 
 ---
 This README provides essential instructions for setting up and running the SSB NanoAOD analysis. If you need additional details, feel free to modify and expand it!
-
