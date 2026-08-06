@@ -134,7 +134,7 @@ private:
     // BranchIsAvailable/GetFloatSingleValueByAlias/GetFloatSinglePtrByAlias)
     // live in NanoAODBranchReader now - see interface/NanoAODBranchReader.h.
     // Analysis calls through branchReader_ everywhere it used to touch those
-    // maps directly (e.g. branchReader_.floatVectors["Jet_pt"].get()).
+    // maps directly (e.g. branchReader_.floatVectors.at("Jet_pt").get()).
     NanoAODBranchReader branchReader_;
 
     // ------------------------------------------------------------------

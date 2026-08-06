@@ -277,49 +277,49 @@ void Analysis::SetObjectVariable() {
     //std::cout << "!!! SetObjectVariable start!!!" << std::endl;
     // Leptons //
     // muon //
-    muons_pt  = branchReader_.floatVectors["Muon_pt"].get(); 
-    muons_eta = branchReader_.floatVectors["Muon_eta"].get(); 
-    muons_phi = branchReader_.floatVectors["Muon_phi"].get();
-    muons_M   = branchReader_.floatVectors["Muon_mass"].get();
+    muons_pt  = branchReader_.floatVectors.at("Muon_pt").get(); 
+    muons_eta = branchReader_.floatVectors.at("Muon_eta").get(); 
+    muons_phi = branchReader_.floatVectors.at("Muon_phi").get();
+    muons_M   = branchReader_.floatVectors.at("Muon_mass").get();
     
-    muons_Id  = branchReader_.boolVectors["Muon_looseId"].get();
-    muons_iso = branchReader_.floatVectors["Muon_pfRelIso03_all"].get();
+    muons_Id  = branchReader_.boolVectors.at("Muon_looseId").get();
+    muons_iso = branchReader_.floatVectors.at("Muon_pfRelIso03_all").get();
 
     /// Muon ID
-    if      (TString(MuonId).Contains( "Loose"  ) )  { muons_Id = branchReader_.boolVectors["Muon_looseId"].get(); }
-    else if (TString(MuonId).Contains( "Medium"  ) ) { muons_Id = branchReader_.boolVectors["Muon_mediumId"].get(); }
-    else if (TString(MuonId).Contains( "Tight"  ) )  { muons_Id = branchReader_.boolVectors["Muon_tightId"].get(); }
+    if      (TString(MuonId).Contains( "Loose"  ) )  { muons_Id = branchReader_.boolVectors.at("Muon_looseId").get(); }
+    else if (TString(MuonId).Contains( "Medium"  ) ) { muons_Id = branchReader_.boolVectors.at("Muon_mediumId").get(); }
+    else if (TString(MuonId).Contains( "Tight"  ) )  { muons_Id = branchReader_.boolVectors.at("Muon_tightId").get(); }
     else { std::cout << "Muon ID Error" << std::endl; }
 
     if (TString(MuonIsoType).Contains("PFIsodbeta03")) {
-        if (branchReader_.floatVectors["Muon_pfRelIso03_all"] == nullptr) {
+        if (branchReader_.floatVectors.at("Muon_pfRelIso03_all") == nullptr) {
             std::cerr << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
             return;
         }
-        muons_iso = branchReader_.floatVectors["Muon_pfRelIso03_all"].get();
+        muons_iso = branchReader_.floatVectors.at("Muon_pfRelIso03_all").get();
     
     } else if (TString(MuonIsoType).Contains("PFIsodbeta04")) {
-        if (branchReader_.floatVectors["Muon_pfRelIso04_all"] == nullptr) {
+        if (branchReader_.floatVectors.at("Muon_pfRelIso04_all") == nullptr) {
             std::cerr << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
             return;
         }
-        muons_iso = branchReader_.floatVectors["Muon_pfRelIso04_all"].get();
+        muons_iso = branchReader_.floatVectors.at("Muon_pfRelIso04_all").get();
     } else {
             std::cerr << "Muon Iso type Error" << std::endl;
             return;
     }
 
     // electron //
-    elecs_pt  = branchReader_.floatVectors["Electron_pt"].get();
-    elecs_eta = branchReader_.floatVectors["Electron_eta"].get(); 
-    elecs_phi = branchReader_.floatVectors["Electron_phi"].get();
-    elecs_M   = branchReader_.floatVectors["Electron_mass"].get();
+    elecs_pt  = branchReader_.floatVectors.at("Electron_pt").get();
+    elecs_eta = branchReader_.floatVectors.at("Electron_eta").get(); 
+    elecs_phi = branchReader_.floatVectors.at("Electron_phi").get();
+    elecs_M   = branchReader_.floatVectors.at("Electron_mass").get();
 
     //elecs_iso = 
     if (TString(ElecIsoType).Contains("PFIsoRho03")) {
-        elecs_iso = branchReader_.floatVectors["Electron_pfRelIso03_all"].get();
+        elecs_iso = branchReader_.floatVectors.at("Electron_pfRelIso03_all").get();
     } else if (TString(ElecIsoType).Contains("PFIsoRho04")) {
-        elecs_iso = branchReader_.floatVectors["Electron_pfRelIso03_all"].get();
+        elecs_iso = branchReader_.floatVectors.at("Electron_pfRelIso03_all").get();
         std::cerr << "No PFIsoRho04 in NanoAOD..." << std::endl;
     } else {
         std::cerr << "Electron Iso type Error" << std::endl;
@@ -329,12 +329,25 @@ void Analysis::SetObjectVariable() {
 
     /// Electron ID
     // NOTE: Electron_cutBased is UChar_t in NanoAODv15 (was Int_t in v9), so
-    // elecs_scbId is left unset here and reads go through branchReader_.GetIntArrayValue()
-    // instead, which finds the branch regardless of which map InitBranches
-    // auto-detected it into.
-    elecs_scbId = branchReader_.intVectors["Electron_cutBased"].get();
+    // it's bound into ucharVectors, not intVectors, on a v15 file - actual
+    // selection reads go through branchReader_.GetIntArrayValue() (below and
+    // at every real elecSCBId(...) call site), which searches whichever map
+    // it actually landed in. elecs_scbId itself is never dereferenced
+    // anywhere else in this file (dead/vestigial - predates the
+    // GetIntArrayValue migration) - kept as a plain find()-guarded lookup
+    // instead of blindly deleting the line, and specifically NOT converted to
+    // `.at()` like the rest of this file's branchReader_ map accesses,
+    // because .at() would throw on every v15 file (Electron_cutBased isn't
+    // in intVectors there) for a variable nothing reads. This was the actual
+    // cause of the "unordered_map::at" crash on the v15 UL2018 test run -
+    // not GenJet_pt (also fixed, but unrelated - that one is a real, if
+    // separate, bug: see the GenJet_pt comment above).
+    {
+        auto it = branchReader_.intVectors.find("Electron_cutBased");
+        elecs_scbId = (it != branchReader_.intVectors.end()) ? it->second.get() : nullptr;
+    }
     if (TString(ElecId).Contains("SCBLoose")) {
-        //elecIdVariant = branchReader_.intVectors["Electron_cutBased"].get();
+        //elecIdVariant = branchReader_.intVectors.at("Electron_cutBased").get();
         eleid_scbcut = 2;
     } else if (TString(ElecId).Contains("SCBMedium")) {
         eleid_scbcut = 3;
@@ -343,16 +356,16 @@ void Analysis::SetObjectVariable() {
     } else if (TString(ElecId).Contains("SCBVeto")) {
         eleid_scbcut = 1;
     } else if (TString(ElecId).Contains("MVALoose")) {
-        elecs_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WPL"].get();
+        elecs_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         eleid_scbcut = 2;
     } else if (TString(ElecId).Contains("MVAMedium")) {
-        elecs_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WP90"].get();
+        elecs_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WP90").get();
         eleid_scbcut = 3;
     } else if (TString(ElecId).Contains("MVATight")) {
-        elecs_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WP80"].get();
+        elecs_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WP80").get();
         eleid_scbcut = 4;
     } else if (TString(ElecId).Contains("MVAVeto")) {
-        elecs_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WPL"].get();
+        elecs_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         eleid_scbcut = 1;
     } else {
         std::cerr << "Electron ID Error" << std::endl;
@@ -366,17 +379,17 @@ void Analysis::SetObjectVariable() {
     /// Muon information ///
     ////////////////////////
     if (TString(veto_muoniso_type).Contains("PFIsodbeta03")) {
-        if (branchReader_.floatVectors["Muon_pfRelIso03_all"] == nullptr) {
+        if (branchReader_.floatVectors.at("Muon_pfRelIso03_all") == nullptr) {
             std::cerr << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
             return;
         }
-        muonsveto_iso = branchReader_.floatVectors["Muon_pfRelIso03_all"].get();
+        muonsveto_iso = branchReader_.floatVectors.at("Muon_pfRelIso03_all").get();
     } else if (TString(veto_muoniso_type).Contains("PFIsodbeta04")) {
-        if (branchReader_.floatVectors["Muon_pfRelIso04_all"] == nullptr) {
+        if (branchReader_.floatVectors.at("Muon_pfRelIso04_all") == nullptr) {
             std::cerr << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
             return;
         }
-        muonsveto_iso = branchReader_.floatVectors["Muon_pfRelIso04_all"].get();
+        muonsveto_iso = branchReader_.floatVectors.at("Muon_pfRelIso04_all").get();
     } else {
         std::cerr << "Muon Iso type Error" << std::endl;
         return;
@@ -391,9 +404,9 @@ void Analysis::SetObjectVariable() {
 
 
     /// Muon ID
-    if      (TString(veto_muonid).Contains( "Loose"  ) )  { muonsveto_Id = branchReader_.boolVectors["Muon_looseId"].get(); }
-    else if (TString(veto_muonid).Contains( "Medium"  ) ) { muonsveto_Id = branchReader_.boolVectors["Muon_mediumId"].get();}
-    else if (TString(veto_muonid).Contains( "Tight"  ) )  { muonsveto_Id = branchReader_.boolVectors["Muon_tightId"].get(); }
+    if      (TString(veto_muonid).Contains( "Loose"  ) )  { muonsveto_Id = branchReader_.boolVectors.at("Muon_looseId").get(); }
+    else if (TString(veto_muonid).Contains( "Medium"  ) ) { muonsveto_Id = branchReader_.boolVectors.at("Muon_mediumId").get();}
+    else if (TString(veto_muonid).Contains( "Tight"  ) )  { muonsveto_Id = branchReader_.boolVectors.at("Muon_tightId").get(); }
     else { std::cout << "Muon ID Error" << std::endl; }
     
     if (muonsveto_Id == nullptr) {
@@ -404,12 +417,17 @@ void Analysis::SetObjectVariable() {
     ////////////////////////////
     /// Electron information ///
     ////////////////////////////
-    // Electron_cutBased is UChar_t in v15 - see the branchReader_.GetIntArrayValue() note above.
-    elecsveto_scbId = branchReader_.intVectors["Electron_cutBased"].get();
+    // Electron_cutBased is UChar_t in v15 - see the elecs_scbId note above
+    // (same dead-variable/wrong-map issue, same fix: find()-guarded instead
+    // of .at(), since real reads go through GetIntArrayValue()).
+    {
+        auto it = branchReader_.intVectors.find("Electron_cutBased");
+        elecsveto_scbId = (it != branchReader_.intVectors.end()) ? it->second.get() : nullptr;
+    }
     if (!branchReader_.BranchIsAvailable("Electron_cutBased")) {std::cerr <<"Error: Electron_cutBased branch not found at all!" <<std::endl;}
 
     if (TString(veto_elecid).Contains("SCBLoose")) {
-        //elecIdVariant = branchReader_.intVectors["Electron_cutBased"].get();
+        //elecIdVariant = branchReader_.intVectors.at("Electron_cutBased").get();
         elevetoid_scbcut = 2;
     } else if (TString(veto_elecid).Contains("SCBMedium")) {
         elevetoid_scbcut = 3;
@@ -418,16 +436,16 @@ void Analysis::SetObjectVariable() {
     } else if (TString(veto_elecid).Contains("SCBVeto")) {
         elevetoid_scbcut = 1;
     } else if (TString(veto_elecid).Contains("MVALoose")) {
-        elecsveto_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WPL"].get();
+        elecsveto_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         elevetoid_scbcut = 2;
     } else if (TString(veto_elecid).Contains("MVAMedium")) {
-        elecsveto_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WP90"].get();
+        elecsveto_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WP90").get();
         elevetoid_scbcut = 3;
     } else if (TString(veto_elecid).Contains("MVATight")) {
-        elecsveto_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WP80"].get();
+        elecsveto_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WP80").get();
         elevetoid_scbcut = 4;
     } else if (TString(veto_elecid).Contains("MVAVeto")) {
-        elecsveto_mvaId = branchReader_.boolVectors["Electron_mvaFall17V2Iso_WPL"].get();
+        elecsveto_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         elevetoid_scbcut = 1;
     } else {
         std::cerr << "Electron ID in veto selection Error " << veto_elecid << std::endl;
@@ -435,7 +453,7 @@ void Analysis::SetObjectVariable() {
 
     if (TString(veto_eleciso_type).Contains("PFIsoRho03")) {
         if (branchReader_.floatVectors.find("Electron_pfRelIso03_all") != branchReader_.floatVectors.end()) {
-            auto* ptr = branchReader_.floatVectors["Electron_pfRelIso03_all"].get();
+            auto* ptr = branchReader_.floatVectors.at("Electron_pfRelIso03_all").get();
             if (ptr) {
                 elecsveto_iso = ptr;
                 //std::cout << "in sele.... elecsveto_iso .. " << std::endl;
@@ -460,23 +478,34 @@ void Analysis::SetObjectVariable() {
     /// Set Jet object ///
     //////////////////////
      
-    jets_pt  = branchReader_.floatVectors["Jet_pt"].get();
-    jets_eta = branchReader_.floatVectors["Jet_eta"].get();
-    jets_phi = branchReader_.floatVectors["Jet_phi"].get();
-    jets_M   = branchReader_.floatVectors["Jet_mass"].get();
+    jets_pt  = branchReader_.floatVectors.at("Jet_pt").get();
+    jets_eta = branchReader_.floatVectors.at("Jet_eta").get();
+    jets_phi = branchReader_.floatVectors.at("Jet_phi").get();
+    jets_M   = branchReader_.floatVectors.at("Jet_mass").get();
     // NanoAODv15: Jet collection is AK4 Puppi and the Jet_jetId flag is gone.
     // jets_Id/jet_id (the old integer-bitmask working point) are no longer
     // populated -- jet ID is now evaluated per-jet via PassConfiguredJetId(),
     // which reimplements the Tight/TightLepVeto formulas directly from the
     // jet energy fractions (see the JetID class, interface/JetID.h).
     jets_Id = nullptr;
-    jets_puId = branchReader_.JetPuIdAvailable() ? branchReader_.intVectors["Jet_puId"].get() : nullptr; // may be null (removed in v15)
+    jets_puId = branchReader_.JetPuIdAvailable() ? branchReader_.intVectors.at("Jet_puId").get() : nullptr; // may be null (removed in v15)
 
     if (!isData){
-        gen_jets_pt  = branchReader_.floatVectors["Gen_Jet_pt"].get();
-        gen_jets_eta = branchReader_.floatVectors["Gen_Jet_eta"].get();
-        gen_jets_phi = branchReader_.floatVectors["Gen_Jet_phi"].get();
-        gen_jets_M   = branchReader_.floatVectors["Gen_Jet_mass"].get();
+        // NOTE: was "Gen_Jet_pt"/"Gen_Jet_eta"/"Gen_Jet_phi"/"Gen_Jet_mass"
+        // (extra underscore after "Gen") - pre-existing branch-name typo,
+        // predates the operator[]->.at() Phase 1 change. The actual NanoAOD
+        // branch (and the key InitBranches() binds it under, per
+        // branchlist/*/branch_list*.txt) is "GenJet_pt" etc. With
+        // operator[], the mismatched key silently returned a null pointer,
+        // which then silently failed the `if (gen_jets_pt && ...)` guard at
+        // MakeJetCollection() - i.e. the gen-jet vector was always empty for
+        // MC events, so JER smearing never found a gen match and always fell
+        // back to pure-stochastic smearing instead of the hybrid method.
+        // Fixed here to the correct branch name.
+        gen_jets_pt  = branchReader_.floatVectors.at("GenJet_pt").get();
+        gen_jets_eta = branchReader_.floatVectors.at("GenJet_eta").get();
+        gen_jets_phi = branchReader_.floatVectors.at("GenJet_phi").get();
+        gen_jets_M   = branchReader_.floatVectors.at("GenJet_mass").get();
     }
 
     // Validate that the configured Jet_ID working point has a PUPPI jet ID
@@ -492,23 +521,23 @@ void Analysis::SetObjectVariable() {
     
     // First set the appropriate b-tag discriminator variable
     if (TString(JetbTag).Contains("deepCSV")) {
-        jets_btag = branchReader_.floatVectors["Jet_btagDeepB"].get();
+        jets_btag = branchReader_.floatVectors.at("Jet_btagDeepB").get();
     }
     else if (TString(JetbTag).Contains("deepJet")) {
-        jets_btag = branchReader_.floatVectors["Jet_btagDeepFlavB"].get();
+        jets_btag = branchReader_.floatVectors.at("Jet_btagDeepFlavB").get();
     }
     else if (TString(JetbTag).Contains("UParT")) {
         // UParT (Unified Particle Transformer) AK4 b-tag score, new in NanoAODv15.
-        jets_btag = branchReader_.floatVectors["Jet_btagUParTAK4B"].get();
+        jets_btag = branchReader_.floatVectors.at("Jet_btagUParTAK4B").get();
     }
     else if (TString(JetbTag).Contains("pfCSVV2")) {
-        jets_btag = branchReader_.floatVectors["Jet_btagCSVV2"].get();
+        jets_btag = branchReader_.floatVectors.at("Jet_btagCSVV2").get();
     }
     else if (TString(JetbTag).Contains("CSV") && !TString(JetbTag).Contains("deep")) {
-        jets_btag = branchReader_.floatVectors["Jet_btagCSV"].get(); // Modify with appropriate variable name if needed
+        jets_btag = branchReader_.floatVectors.at("Jet_btagCSV").get(); // Modify with appropriate variable name if needed
     }
     else if (TString(JetbTag).Contains("CISV")) {
-        jets_btag = branchReader_.floatVectors["Jet_btagCISV"].get(); // Modify with appropriate variable name if needed
+        jets_btag = branchReader_.floatVectors.at("Jet_btagCISV").get(); // Modify with appropriate variable name if needed
     }
     else {
         std::cout << "Error: Unknown b-tagging algorithm in " << JetbTag << std::endl;
@@ -682,13 +711,13 @@ void Analysis::SetObjectVariable() {
         met_pt  = branchReader_.GetFloatSinglePtrByAlias({"MET_pt", "PFMET_pt"});
         met_phi = branchReader_.GetFloatSinglePtrByAlias({"MET_phi", "PFMET_phi"});}
     else if (METtype == "Puppi"){
-	met_pt  = branchReader_.floatSingles["PuppiMET_pt"].get();
-        met_phi  = branchReader_.floatSingles["PuppiMET_phi"].get();}
+	met_pt  = branchReader_.floatSingles.at("PuppiMET_pt").get();
+        met_phi  = branchReader_.floatSingles.at("PuppiMET_phi").get();}
     else {
         // Unrecognized/unset METtype: default to PuppiMET (NanoAODv15 default).
         std::cerr << "[WARNING] METtype='" << METtype << "' not recognized - defaulting to PuppiMET." << std::endl;
-        met_pt  = branchReader_.floatSingles["PuppiMET_pt"].get();
-        met_phi = branchReader_.floatSingles["PuppiMET_phi"].get();
+        met_pt  = branchReader_.floatSingles.at("PuppiMET_pt").get();
+        met_phi = branchReader_.floatSingles.at("PuppiMET_phi").get();
     }
 
     object_variables_set_ = true; 
@@ -946,9 +975,9 @@ void Analysis::Loop() {
             // Per-event sign is randomized deterministically using run/lumi/event as seed.
             // Each observable uses a different bit of the hash so they are randomized independently.
             if (isData && isBlind) {
-                unsigned int      run_num  = **branchReader_.uintSingles["run"];
-                unsigned int      lumi_num = **branchReader_.uintSingles["luminosityBlock"];
-                unsigned long long evt_num = **branchReader_.ulongSingles["event"];
+                unsigned int      run_num  = **branchReader_.uintSingles.at("run");
+                unsigned int      lumi_num = **branchReader_.uintSingles.at("luminosityBlock");
+                unsigned long long evt_num = **branchReader_.ulongSingles.at("event");
 
                 uint64_t seed = (uint64_t)run_num  * 100000000ULL
                               + (uint64_t)lumi_num * 1000000ULL
@@ -1273,18 +1302,18 @@ void Analysis::L1PreFireApply()
     const char* sys = L1PreFireSys.Data();
 
     if (strstr(sys, "central")) {
-        l1prefire_ = **branchReader_.floatSingles["L1PreFiringWeight_Nom"];
+        l1prefire_ = **branchReader_.floatSingles.at("L1PreFiringWeight_Nom");
     }
     else if (strstr(sys, "up")) {
-        l1prefire_ = **branchReader_.floatSingles["L1PreFiringWeight_Up"];
+        l1prefire_ = **branchReader_.floatSingles.at("L1PreFiringWeight_Up");
     }
     else if (strstr(sys, "down")) {
-        l1prefire_ = **branchReader_.floatSingles["L1PreFiringWeight_Dn"];
+        l1prefire_ = **branchReader_.floatSingles.at("L1PreFiringWeight_Dn");
     }
     else if (!strstr(sys, "none")) {
         // Only print error if not "none"
         std::cout << "L1Prefiring sys Error ... Default is Weight_L1Prefiring ... : " << L1PreFireSys << std::endl;
-        l1prefire_ = **branchReader_.floatSingles["L1PreFiringWeight_Nom"];
+        l1prefire_ = **branchReader_.floatSingles.at("L1PreFiringWeight_Nom");
     }
     //std::cout << "l1prefire_ : " << l1prefire_ << std::endl;
     evt_weight_ *= l1prefire_;
@@ -1370,7 +1399,7 @@ void Analysis::LeptonSelector() {
                 muons.push_back(pre_muons.at(i));
             } 
             else if (v_lepton_idx.size() == 1 && 
-                     (*branchReader_.intVectors["Muon_charge"])[v_lepton_idx[0]] != (*branchReader_.intVectors["Muon_charge"])[i]) {
+                     (*branchReader_.intVectors.at("Muon_charge"))[v_lepton_idx[0]] != (*branchReader_.intVectors.at("Muon_charge"))[i]) {
                 // Add second selected muon with opposite charge
                 v_lepton_idx.push_back(i);
                 // Store its TLorentzVector in muons vector
@@ -1387,8 +1416,8 @@ void Analysis::LeptonSelector() {
             // Skip electrons that don't pass selection criteria
             if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), eleid_scbcut) ||
-                (fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) > 1.4442 &&
-                 fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) < 1.566) ||
+                (fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
+                 fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
                 !(elecCharge(branchReader_.GetIntArrayValue("Electron_tightCharge", i)))) {
                 continue;
             }
@@ -1401,7 +1430,7 @@ void Analysis::LeptonSelector() {
                 elecs.push_back(pre_elecs.at(i));
             } 
             else if (v_electron_idx.size() == 1 && 
-                     (*branchReader_.intVectors["Electron_charge"])[v_electron_idx[0]] != (*branchReader_.intVectors["Electron_charge"])[i]) {
+                     (*branchReader_.intVectors.at("Electron_charge"))[v_electron_idx[0]] != (*branchReader_.intVectors.at("Electron_charge"))[i]) {
                 // Add second selected electron with opposite charge
                 v_lepton_idx.push_back(i);
                 v_electron_idx.push_back(i);
@@ -1440,15 +1469,15 @@ void Analysis::LeptonSelector() {
                 // Skip electrons that don't pass selection criteria
                 if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
                     !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), eleid_scbcut) ||
-                   (fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) > 1.4442 &&
-                   fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) < 1.566) ||
+                   (fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
+                   fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
                   !(elecCharge(branchReader_.GetIntArrayValue("Electron_tightCharge", i))) ||
-                  !(*branchReader_.boolVectors["Electron_convVeto"])[i]) {
+                  !(*branchReader_.boolVectors.at("Electron_convVeto"))[i]) {
                     continue;
                 }
         
                 // Only select electrons with charge opposite to the first selected muon
-                if ((*branchReader_.intVectors["Muon_charge"])[v_muon_idx[0]] != (*branchReader_.intVectors["Electron_charge"])[i]) {
+                if ((*branchReader_.intVectors.at("Muon_charge"))[v_muon_idx[0]] != (*branchReader_.intVectors.at("Electron_charge"))[i]) {
                     // Add selected electron
                     v_electron_idx.push_back(i);
                     // Store its TLorentzVector in electrons vector
@@ -1480,7 +1509,7 @@ void Analysis::LeptonOrder() {
             Lep2 = muons[1];
 
             // Set Lep & AnLep based on charge
-            if ((*branchReader_.intVectors["Muon_charge"])[v_muon_idx[0]] < 0) {
+            if ((*branchReader_.intVectors.at("Muon_charge"))[v_muon_idx[0]] < 0) {
                 Lep = muons[0];
                 AnLep = muons[1];
             } else {
@@ -1496,7 +1525,7 @@ void Analysis::LeptonOrder() {
             Lep2 = elecs[1];
 
             // Set Lep & AnLep based on charge
-            if ((*branchReader_.intVectors["Electron_charge"])[v_electron_idx[0]] < 0) {
+            if ((*branchReader_.intVectors.at("Electron_charge"))[v_electron_idx[0]] < 0) {
                 Lep = elecs[0];
                 AnLep = elecs[1];
             } else {
@@ -1518,7 +1547,7 @@ void Analysis::LeptonOrder() {
             }
 
             // Set Lep & AnLep based on muon charge
-            if ((*branchReader_.intVectors["Muon_charge"])[v_muon_idx[0]] < 0) {
+            if ((*branchReader_.intVectors.at("Muon_charge"))[v_muon_idx[0]] < 0) {
                 Lep = muons[0];
                 AnLep = elecs[0];
             } else {
@@ -1597,7 +1626,7 @@ void Analysis::LeptonOrder() {
                 Lep2 = pre_muons.at(v_muon_idx.at(0));
             }
 
-            if ((*branchReader_.intVectors["Muon_charge"])[v_muon_idx[0]] < 0) {
+            if ((*branchReader_.intVectors.at("Muon_charge"))[v_muon_idx[0]] < 0) {
                 Lep = pre_muons.at(v_muon_idx.at(0));
                 AnLep = pre_elecs.at(v_electron_idx.at(0));
             } else {
@@ -1648,7 +1677,7 @@ void Analysis::MakeMuonCollection() {
                 // Muon_genPartIdx / Muon_nTrackerLayers narrowed to Short_t /
                 // UChar_t in NanoAODv15, so look them up via branchReader_.GetIntArrayValue()
                 // rather than assuming they live in branchReader_.intVectors.
-                auto GenPts = branchReader_.floatVectors["GenPart_pt"].get();
+                auto GenPts = branchReader_.floatVectors.at("GenPart_pt").get();
 
                 if (!branchReader_.BranchIsAvailable("Muon_genPartIdx") || !GenPts || !branchReader_.BranchIsAvailable("Muon_nTrackerLayers")) {
                     std::cerr << "ERROR: Required MC branches for Rochester correction not available!" << std::endl;
@@ -1723,16 +1752,16 @@ void Analysis::MakeJetCollection() {
             rawJet.SetPtEtaPhiM(jets_pt->At(ijet), jets_eta->At(ijet), jets_phi->At(ijet), jets_M->At(ijet));
             rawJets.push_back(rawJet);
 
-            float rawFactor = (branchReader_.floatVectors.count("Jet_rawFactor") && branchReader_.floatVectors["Jet_rawFactor"]->GetSize() > ijet)
-                                ? branchReader_.floatVectors["Jet_rawFactor"]->At(ijet) : 0.0;
+            float rawFactor = (branchReader_.floatVectors.count("Jet_rawFactor") && branchReader_.floatVectors.at("Jet_rawFactor")->GetSize() > ijet)
+                                ? branchReader_.floatVectors.at("Jet_rawFactor")->At(ijet) : 0.0;
             rawFactors.push_back(rawFactor);
 
-            float area = (branchReader_.floatVectors.count("Jet_area") && branchReader_.floatVectors["Jet_area"]->GetSize() > ijet)
-                           ? branchReader_.floatVectors["Jet_area"]->At(ijet) : 0.5;
+            float area = (branchReader_.floatVectors.count("Jet_area") && branchReader_.floatVectors.at("Jet_area")->GetSize() > ijet)
+                           ? branchReader_.floatVectors.at("Jet_area")->At(ijet) : 0.5;
             jetAreas.push_back(area);
 
-            float muonSubtr = (branchReader_.floatVectors.count("Jet_muonSubtrFactor") && branchReader_.floatVectors["Jet_muonSubtrFactor"]->GetSize() > ijet)
-                                ? branchReader_.floatVectors["Jet_muonSubtrFactor"]->At(ijet) : 0.0;
+            float muonSubtr = (branchReader_.floatVectors.count("Jet_muonSubtrFactor") && branchReader_.floatVectors.at("Jet_muonSubtrFactor")->GetSize() > ijet)
+                                ? branchReader_.floatVectors.at("Jet_muonSubtrFactor")->At(ijet) : 0.0;
             jetMuonSubtrFactors.push_back(muonSubtr);
 
             // Jet_genJetIdx is Short_t in NanoAODv15 (was Int_t in v9) - use the
@@ -1833,12 +1862,12 @@ void Analysis::MakeJetCollection() {
     // The v15 Puppi-jet DATA JEC compound correction takes the event's run
     // number as an extra evaluate() input (see SSBCorrections::jec_needs_run_) -
     // pass it through regardless; it's ignored when not needed.
-    unsigned int run_number_for_jec = **branchReader_.uintSingles["run"];
+    unsigned int run_number_for_jec = **branchReader_.uintSingles.at("run");
     // Event number, used to build a deterministic per-(event, jet) JER
     // smearing seed inside SmearJER (see there) instead of the shared global
     // gRandom - same "event" branch already read elsewhere in this file
     // (e.g. for METXYCorrection).
-    unsigned long long event_number_for_jer = **branchReader_.ulongSingles["event"];
+    unsigned long long event_number_for_jer = **branchReader_.ulongSingles.at("event");
     // ApplyJetCorrections() only builds the physics jet collection (pt+mass)
     // now - it no longer computes/returns a MET value at all (see
     // SSBCorrections.h: the tutorial keeps jet-pt correction and Type-1 MET
@@ -1872,11 +1901,11 @@ void Analysis::MakeJetCollection() {
     // silent fallback to the old, non-official recipe.
     if (branchReader_.BranchIsAvailable("CorrT1METJet_rawPt") &&
         branchReader_.BranchIsAvailable("Jet_muonSubtrFactor")) {
-        auto *corrT1AreaArr      = branchReader_.floatVectors.count("CorrT1METJet_area") ? branchReader_.floatVectors["CorrT1METJet_area"].get() : nullptr;
-        auto *corrT1EtaArr       = branchReader_.floatVectors.count("CorrT1METJet_eta") ? branchReader_.floatVectors["CorrT1METJet_eta"].get() : nullptr;
-        auto *corrT1PhiArr       = branchReader_.floatVectors.count("CorrT1METJet_phi") ? branchReader_.floatVectors["CorrT1METJet_phi"].get() : nullptr;
-        auto *corrT1RawPtArr     = branchReader_.floatVectors["CorrT1METJet_rawPt"].get();
-        auto *corrT1MuonSubtrArr = branchReader_.floatVectors.count("CorrT1METJet_muonSubtrFactor") ? branchReader_.floatVectors["CorrT1METJet_muonSubtrFactor"].get() : nullptr;
+        auto *corrT1AreaArr      = branchReader_.floatVectors.count("CorrT1METJet_area") ? branchReader_.floatVectors.at("CorrT1METJet_area").get() : nullptr;
+        auto *corrT1EtaArr       = branchReader_.floatVectors.count("CorrT1METJet_eta") ? branchReader_.floatVectors.at("CorrT1METJet_eta").get() : nullptr;
+        auto *corrT1PhiArr       = branchReader_.floatVectors.count("CorrT1METJet_phi") ? branchReader_.floatVectors.at("CorrT1METJet_phi").get() : nullptr;
+        auto *corrT1RawPtArr     = branchReader_.floatVectors.at("CorrT1METJet_rawPt").get();
+        auto *corrT1MuonSubtrArr = branchReader_.floatVectors.count("CorrT1METJet_muonSubtrFactor") ? branchReader_.floatVectors.at("CorrT1METJet_muonSubtrFactor").get() : nullptr;
 
         Int_t nCorrT1 = corrT1RawPtArr ? corrT1RawPtArr->GetSize() : 0;
         std::vector<float> corrT1AreaVec, corrT1EtaVec, corrT1PhiVec, corrT1RawPtVec, corrT1MuonSubtrVec;
@@ -1894,8 +1923,8 @@ void Analysis::MakeJetCollection() {
         // reconstruction) - reused here for the Type-1 MET selection cut
         // (corrected pt>15, |eta|<5.2, chEmEF+neEmEF<0.90) confirmed from the
         // CMS JERC tutorial's Applier::correctedMet().
-        auto *jetChEmEFArr = branchReader_.floatVectors.count("Jet_chEmEF") ? branchReader_.floatVectors["Jet_chEmEF"].get() : nullptr;
-        auto *jetNeEmEFArr = branchReader_.floatVectors.count("Jet_neEmEF") ? branchReader_.floatVectors["Jet_neEmEF"].get() : nullptr;
+        auto *jetChEmEFArr = branchReader_.floatVectors.count("Jet_chEmEF") ? branchReader_.floatVectors.at("Jet_chEmEF").get() : nullptr;
+        auto *jetNeEmEFArr = branchReader_.floatVectors.count("Jet_neEmEF") ? branchReader_.floatVectors.at("Jet_neEmEF").get() : nullptr;
         std::vector<float> jetChEmEFVec, jetNeEmEFVec;
         jetChEmEFVec.reserve(nJets);
         jetNeEmEFVec.reserve(nJets);
@@ -1936,7 +1965,7 @@ void Analysis::MakeJetCollection() {
     bool isMC = !isData; bool isUL = true; bool isPuppi = METtype == "Puppi";
 
 
-    if (applyMETXY == "True") Met = SSBCorr->METXYCorrection(Met, **branchReader_.uintSingles["run"], yearForm, isMC, static_cast<int>(branchReader_.GetIntSingleValue("PV_npvsGood")), isUL, isPuppi);
+    if (applyMETXY == "True") Met = SSBCorr->METXYCorrection(Met, **branchReader_.uintSingles.at("run"), yearForm, isMC, static_cast<int>(branchReader_.GetIntSingleValue("PV_npvsGood")), isUL, isPuppi);
 
     // ============================================================================
     // VERIFICATION: Check final size consistency
@@ -2061,8 +2090,8 @@ void Analysis::JetSelector() {
         bool should_apply_hem = false;
         if (RunPeriod.Contains("2018")) {
             if (isData) {
-                if (branchReader_.uintSingles.find("run") != branchReader_.uintSingles.end() && branchReader_.uintSingles["run"]) {
-                    unsigned int run_num = **branchReader_.uintSingles["run"];
+                if (branchReader_.uintSingles.find("run") != branchReader_.uintSingles.end() && branchReader_.uintSingles.at("run")) {
+                    unsigned int run_num = **branchReader_.uintSingles.at("run");
                     should_apply_hem = (run_num >= 319077);
                 }
             } else {
@@ -2074,10 +2103,10 @@ void Analysis::JetSelector() {
         // pre-selection requires (chEmEF+neEmEF)<0.90 before evaluating the
         // veto map - pt/jetId pre-selection are already satisfied by this
         // point (passKinematicCuts/PassConfiguredJetId above).
-        double jetChEmEFForVeto = (branchReader_.floatVectors.count("Jet_chEmEF") && branchReader_.floatVectors["Jet_chEmEF"]->GetSize() > i)
-                                     ? branchReader_.floatVectors["Jet_chEmEF"]->At(i) : 0.0;
-        double jetNeEmEFForVeto = (branchReader_.floatVectors.count("Jet_neEmEF") && branchReader_.floatVectors["Jet_neEmEF"]->GetSize() > i)
-                                     ? branchReader_.floatVectors["Jet_neEmEF"]->At(i) : 0.0;
+        double jetChEmEFForVeto = (branchReader_.floatVectors.count("Jet_chEmEF") && branchReader_.floatVectors.at("Jet_chEmEF")->GetSize() > i)
+                                     ? branchReader_.floatVectors.at("Jet_chEmEF")->At(i) : 0.0;
+        double jetNeEmEFForVeto = (branchReader_.floatVectors.count("Jet_neEmEF") && branchReader_.floatVectors.at("Jet_neEmEF")->GetSize() > i)
+                                     ? branchReader_.floatVectors.at("Jet_neEmEF")->At(i) : 0.0;
         if (should_apply_hem && SSBCorr->ShouldVetoJet(jetVec, jetChEmEFForVeto, jetNeEmEFForVeto)) {
 		//std::cout << "SSBCorr->GetJetVetoType()" << SSBCorr->GetJetVetoType() << std::endl;
             if (SSBCorr->GetJetVetoType() == "jet") {
@@ -2437,10 +2466,10 @@ void Analysis::SelectVetoElectrons() {
             // Apply cuts
             if (!passKinematicCuts(elecs_pt->At(iel), elecs_eta->At(iel), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", iel), elevetoid_scbcut) ||
-                (fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[iel] + elecs_eta->At(iel)) > 1.4442 &&
-                 fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[iel] + elecs_eta->At(iel)) < 1.566) ||
+                (fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[iel] + elecs_eta->At(iel)) > 1.4442 &&
+                 fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[iel] + elecs_eta->At(iel)) < 1.566) ||
                 !elecCharge(branchReader_.GetIntArrayValue("Electron_tightCharge", iel)) ||
-                !(*branchReader_.boolVectors["Electron_convVeto"])[iel]
+                !(*branchReader_.boolVectors.at("Electron_convVeto"))[iel]
                 ) {
                 continue;
             }
@@ -2461,10 +2490,10 @@ void Analysis::SelectVetoElectrons() {
             // Apply cuts (same logic as in LeptonSelector)
             if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), elevetoid_scbcut) ||
-                (fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) > 1.4442 &&
-                 fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) < 1.566) ||
+                (fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
+                 fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
                 !elecCharge(branchReader_.GetIntArrayValue("Electron_tightCharge", i)) ||
-                !(*branchReader_.boolVectors["Electron_convVeto"])[i]
+                !(*branchReader_.boolVectors.at("Electron_convVeto"))[i]
                 ) {
                 continue;
             }
@@ -2486,10 +2515,10 @@ void Analysis::SelectVetoElectrons() {
             // Apply cuts (same logic as in LeptonSelector)
             if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), elevetoid_scbcut) ||
-                (fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) > 1.4442 &&
-                 fabs((*branchReader_.floatVectors["Electron_deltaEtaSC"])[i] + elecs_eta->At(i)) < 1.566) ||
+                (fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
+                 fabs((*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
                 !elecCharge(branchReader_.GetIntArrayValue("Electron_tightCharge", i)) ||
-                !(*branchReader_.boolVectors["Electron_convVeto"])[i]) {
+                !(*branchReader_.boolVectors.at("Electron_convVeto"))[i]) {
                 continue;
             }
             
@@ -2538,7 +2567,7 @@ bool Analysis::ThirdLeptonVeto()
         if (v_muon_idx.size() < 1 || v_electron_idx.size() < 1) {
             third_veto = false;
         }
-    //    else if ((*branchReader_.intVectors["Muon_charge"])[v_muon_idx.at(0)] == (*branchReader_.intVectors["Electron_charge"])[v_electron_idx.at(0)]) {
+    //    else if ((*branchReader_.intVectors.at("Muon_charge"))[v_muon_idx.at(0)] == (*branchReader_.intVectors.at("Electron_charge"))[v_electron_idx.at(0)]) {
             // Require opposite sign
     //        third_veto = false;
     //    }
@@ -2560,7 +2589,7 @@ void Analysis::GenWeightApply()
     //std::cout << "start GenWieghtApply !!" << std::endl; 
     double genweight = 1.0;
     if (!isData){
-        if (**branchReader_.floatSingles["Generator_weight"] > 0.0){genweight =1;}
+        if (**branchReader_.floatSingles.at("Generator_weight") > 0.0){genweight =1;}
         else {genweight =-1;}
         evt_weight_ = evt_weight_*genweight;
     }  
@@ -2749,13 +2778,13 @@ void Analysis::LeptonSFApply()
         //    std::cout << "dielectron case !" << std::endl;
                 //std::cout << "LepIdSFSys.Data : " <<LepIdSFSys << " LepRecoSFSys.Data " <<LepRecoSFSys << std::endl;
             lep_sf = SSBCorr->DoubleElec_Eff(Lep1, Lep2,
-                                            (*branchReader_.floatVectors["Electron_deltaEtaSC"])[v_electron_idx[0]] + elecs_eta->At(v_electron_idx[0]),
-                                            (*branchReader_.floatVectors["Electron_deltaEtaSC"])[v_electron_idx[1]] + elecs_eta->At(v_electron_idx[1]),
+                                            (*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[v_electron_idx[0]] + elecs_eta->At(v_electron_idx[0]),
+                                            (*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[v_electron_idx[1]] + elecs_eta->At(v_electron_idx[1]),
                                             ElecId.Data(),LepIdSFSys.Data(), LepRecoSFSys.Data()); // LepRecoSFSys is for Electron
         }
         else if (TString(Decaymode).Contains("muel")) {
             // Calculate supercluster eta for electron
-            double electron_sueta = (*branchReader_.floatVectors["Electron_deltaEtaSC"])[v_electron_idx[0]] + elecs_eta->At(v_electron_idx[0]);
+            double electron_sueta = (*branchReader_.floatVectors.at("Electron_deltaEtaSC"))[v_electron_idx[0]] + elecs_eta->At(v_electron_idx[0]);
 
             // Apply MuonElec_Eff function
             lep_sf = SSBCorr->MuonElec_Eff(Lep1, Lep2,  // Assuming Lep1=muon, Lep2=electron based on LeptonOrder()
@@ -2790,7 +2819,7 @@ void Analysis::PUWeightApply()
        
     if ( !TString(FileName_).Contains( "Data") )
     {  
-       double pu_weight_central = SSBCorr->GetPUWeight( **branchReader_.floatSingles["Pileup_nTrueInt"] , PileUpSys.Data() );
+       double pu_weight_central = SSBCorr->GetPUWeight( **branchReader_.floatSingles.at("Pileup_nTrueInt") , PileUpSys.Data() );
        if (TString(PileUpSys).Contains("central") || TString(PileUpSys).Contains("nominal")  ) { puweight_   = pu_weight_central;}
        else {  
           std::cerr << "PUWeightApply Error... Defalut is Weight_PileUp ... : " << PileUpSys << std::endl;
