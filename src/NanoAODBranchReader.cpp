@@ -17,8 +17,16 @@ void NanoAODBranchReader::InitBranches(const std::string &branchListFile, bool i
 
     std::string line;
     while (std::getline(infile, line)) {
-        // Skip empty lines
+        // Skip empty lines and comment lines (leading '#', ignoring leading
+        // whitespace) - the branch list's own header/inline comments were
+        // previously falling through to the "Invalid branch format" warning
+        // below instead of being recognized as comments, spamming the log
+        // with one warning per comment line on every single run.
         if (line.empty()) continue;
+        {
+            size_t firstNonWs = line.find_first_not_of(" \t\r\n");
+            if (firstNonWs == std::string::npos || line[firstNonWs] == '#') continue;
+        }
 
         std::istringstream iss(line);
         std::string branchName, objectType, dataType, varType;

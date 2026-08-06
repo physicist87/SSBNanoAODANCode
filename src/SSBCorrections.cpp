@@ -10,7 +10,49 @@
 #include <vector>
 #include "TLorentzVector.h"
 
+namespace {
+// Generic "optional correctionlib load" helper: runs `loader` (typically a
+// CorrectionSet::from_file(...) + ->at(...)/->compound().at(...) lookup, but
+// anything throwing std::exception on failure works) and returns nullptr
+// with a single [WARNING] instead of letting the exception propagate.
+// Matches the pattern every non-essential correction in this file already
+// followed by hand (jec_l1_, jer_sfunc_, jer_smear_, pujetid_sf_,
+// jetvetomap_, btag_wp_values_) - required corrections (jec_, jer_, muon/
+// electron SFs, etc.) are intentionally NOT routed through this: a missing
+// required correction should crash loudly rather than silently produce
+// wrong physics with a fallback nobody asked for.
+template <typename T, typename LoaderFn>
+std::shared_ptr<const T> LoadOptionalCorrection(LoaderFn&& loader, const std::string& context) {
+    try {
+        return loader();
+    } catch (const std::exception& e) {
+        std::cerr << "[WARNING] " << context << ": " << e.what() << std::endl;
+        return nullptr;
+    }
+}
+}  // namespace
 
+BTagAlgo ParseBTagAlgo(const std::string& jetBtagConfig) {
+    if (jetBtagConfig.find("deepCSV") != std::string::npos) return BTagAlgo::DeepCSV;
+    if (jetBtagConfig.find("deepJet") != std::string::npos) return BTagAlgo::DeepJet;
+    if (jetBtagConfig.find("UParT") != std::string::npos)   return BTagAlgo::UParTAK4;
+    if (jetBtagConfig.find("pfCSVV2") != std::string::npos) return BTagAlgo::CSVv2;
+    return BTagAlgo::Unknown;
+}
+
+std::string BTagAlgoToString(BTagAlgo algo) {
+    switch (algo) {
+        case BTagAlgo::DeepCSV:  return "DeepCSV";
+        case BTagAlgo::DeepJet:  return "DeepJet";
+        // Confirmed via a real run: btagEff_UParTAK4.root's histograms are
+        // named "eff_UParTAK4_<flav>_<wp>", not "eff_UParT_..." - must be
+        // "UParTAK4" here to match both the .root filename and the
+        // histogram names inside it (see NOTES.md).
+        case BTagAlgo::UParTAK4: return "UParTAK4";
+        case BTagAlgo::CSVv2:    return "CSVv2";
+        default:                 return "Unknown";
+    }
+}
 
 SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileName) {
     std::cout << "TextReader in SSBCorrections ! " << std::endl;
@@ -195,17 +237,12 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     // L1FastJet-only correction (single, not compound) - needed as the Type-1
     // MET baseline (see ApplyType1METWithCorrT1/GetL1CorrectedJetPt). Same
     // file as jec_, just a plain (non-compound) correction lookup.
-    try {
-        jec_l1_ = jec_set->at(jecL1Name);
-    } catch (const std::exception& e) {
-        std::cerr << "[WARNING] Could not load L1FastJet-only correction '" << jecL1Name
-                  << "' from " << jec_path << ": " << e.what()
-                  << ". Type-1 MET recomputation will fall back to a (fullyCorrected-raw) "
-                  << "delta instead of the CMS-recommended (fullyCorrected-L1only) one - "
-                  << "this is a known-less-accurate fallback, not the standard recipe."
-                  << std::endl;
-        jec_l1_ = nullptr;
-    }
+    jec_l1_ = LoadOptionalCorrection<correction::Correction>(
+        [&]() { return jec_set->at(jecL1Name); },
+        "Could not load L1FastJet-only correction '" + jecL1Name + "' from " + jec_path +
+        ". Type-1 MET recomputation will fall back to a (fullyCorrected-raw) delta instead "
+        "of the CMS-recommended (fullyCorrected-L1only) one - this is a known-less-accurate "
+        "fallback, not the standard recipe.");
 
     auto jer_set = correction::CorrectionSet::from_file(jsonDir + jer_path);
     jer_ = jer_set->at(jer_res_name);
@@ -220,19 +257,17 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     // sf*(1 +/- sfUnc) for up/down. Optional: some campaigns may not publish
     // this correction, in which case up/down variations just aren't
     // available (SmearJER only uses "nominal" today regardless).
-    try {
-        std::string jerSfUncName = jer_name;
+    std::string jerSfUncName = jer_name;
+    {
         size_t pos = jerSfUncName.find("ScaleFactor");
         if (pos != std::string::npos) {
             jerSfUncName.replace(pos, std::string("ScaleFactor").size(), "SFUncertainty");
         }
-        jer_sfunc_ = jer_sf_set->at(jerSfUncName);
-    } catch (const std::exception& e) {
-        std::cerr << "[WARNING] Could not load JER SF uncertainty correction (derived from JERName "
-                  << "by replacing 'ScaleFactor' with 'SFUncertainty'): " << e.what()
-                  << ". JER SF up/down variations will not be available." << std::endl;
-        jer_sfunc_ = nullptr;
     }
+    jer_sfunc_ = LoadOptionalCorrection<correction::Correction>(
+        [&]() { return jer_sf_set->at(jerSfUncName); },
+        "Could not load JER SF uncertainty correction (derived from JERName by replacing "
+        "'ScaleFactor' with 'SFUncertainty'). JER SF up/down variations will not be available.");
 
     // CMS JME's official "JERSmear" correctionlib tool (jer_smear.json.gz) -
     // does the hybrid-method/stochastic JER smearing decision and the actual
@@ -245,15 +280,16 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     std::string jerSmearPath = reader->Check("JERSmearPath") ? reader->GetText("JERSmearPath") : "";
     std::string jerSmearName = reader->Check("JERSmearName") ? reader->GetText("JERSmearName") : "JERSmear";
     if (!jerSmearPath.empty()) {
-        try {
-            auto jerSmearSet = correction::CorrectionSet::from_file(jsonDir + jerSmearPath);
-            jer_smear_ = jerSmearSet->at(jerSmearName);
+        jer_smear_ = LoadOptionalCorrection<correction::Correction>(
+            [&]() {
+                auto jerSmearSet = correction::CorrectionSet::from_file(jsonDir + jerSmearPath);
+                return jerSmearSet->at(jerSmearName);
+            },
+            "Could not load JERSmearPath=" + jerSmearPath +
+            ". Falling back to an in-house JER smearing implementation.");
+        if (jer_smear_) {
             std::cout << "[INFO] Loaded JER smearing tool '" << jerSmearName << "' from "
                       << jerSmearPath << " - using it for JER smearing (CMS-recommended)." << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "[WARNING] Could not load JERSmearPath=" << jerSmearPath << ": " << e.what()
-                      << ". Falling back to an in-house JER smearing implementation." << std::endl;
-            jer_smear_ = nullptr;
         }
     } else {
         std::cerr << "[WARNING] JERSmearPath not set in config - falling back to an in-house "
@@ -276,15 +312,16 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     // jmar.json.gz didn't exist at the expected CAT cvmfs path (2018 UL JMAR
     // apparently doesn't have a NanoAODv15 folder there, or is named/located
     // differently - worth an `ls` on your cvmfs to confirm the real path).
-    try {
-        auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
-        pujetid_sf_ = jmar_sf_set->at("PUJetID_eff");
+    pujetid_sf_ = LoadOptionalCorrection<correction::Correction>(
+        [&]() {
+            auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
+            return jmar_sf_set->at("PUJetID_eff");
+        },
+        "Could not load JMARPath=" + jmar_path +
+        ". PU jet ID SF will be unavailable (GetPUJetIDSFAndEff() returns 1.0 - no PU-ID "
+        "reweighting applied).");
+    if (pujetid_sf_) {
         std::cout << "[INFO] Loaded PU jet ID SF from " << jmar_path << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "[WARNING] Could not load JMARPath=" << jmar_path << ": " << e.what()
-                  << ". PU jet ID SF will be unavailable (GetPUJetIDSFAndEff() returns 1.0 - "
-                  << "no PU-ID reweighting applied)." << std::endl;
-        pujetid_sf_ = nullptr;
     }
 
     jveto_name_ = jveto_name;
@@ -292,16 +329,17 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     jveto_type_ = jveto_type;	
 
     if (!jveto_path.empty() && !jveto_name.empty()) {
-       try {
-           auto jetveto_set = correction::CorrectionSet::from_file(jsonDir + jveto_path);
-           jetvetomap_ = jetveto_set->at(jveto_name);  // jveto_name 사용
-           std::cout << "[INFO] Loaded jet veto map: " << jveto_name
-                     << " with key: " << jveto_map_key
-                     << " type: " << jveto_type << std::endl;
-       } catch (const std::exception& e) {
-           std::cerr << "[WARNING] Failed to load jet veto map: " << e.what() << std::endl;
-           jetvetomap_ = nullptr;
-       }
+        jetvetomap_ = LoadOptionalCorrection<correction::Correction>(
+            [&]() {
+                auto jetveto_set = correction::CorrectionSet::from_file(jsonDir + jveto_path);
+                return jetveto_set->at(jveto_name);
+            },
+            "Failed to load jet veto map");
+        if (jetvetomap_) {
+            std::cout << "[INFO] Loaded jet veto map: " << jveto_name
+                      << " with key: " << jveto_map_key
+                      << " type: " << jveto_type << std::endl;
+        }
     } else {
        std::cout << "[INFO] Jet veto map not configured, skipping..." << std::endl;
        jetvetomap_ = nullptr;
@@ -321,26 +359,15 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     }
 
 
-    std::string btag_algo = "";
-    std::string btag_wp = "";
-
-    if (jet_btag_conf.find("deepCSV") != std::string::npos) {
-        btag_algo = "DeepCSV";
-    } else if (jet_btag_conf.find("deepJet") != std::string::npos) {
-        btag_algo = "DeepJet";
-    } else if (jet_btag_conf.find("UParT") != std::string::npos) {
-        // UParT (Unified Particle Transformer) AK4 b-tagger, new in NanoAODv15.
-        // Confirmed via a real run: your btagEff_UParTAK4.root's histograms
-        // are named "eff_UParTAK4_<flav>_<wp>", not "eff_UParT_..." (the run
-        // logged "[WARNING] Histogram not found: eff_UParT_b_Medium" etc.
-        // for all three flavors) - so this must be "UParTAK4" to match both
-        // the .root filename AND the histogram names inside it.
-        btag_algo = "UParTAK4";
-    } else if (jet_btag_conf.find("pfCSVV2") != std::string::npos) {
-        btag_algo = "CSVv2";
-    } else {
+    // Single canonical parse (ParseBTagAlgo, in SSBCorrections.h) shared with
+    // Analysis.cpp's own btag_algo_ parsing, so the two can't drift out of
+    // sync the way they did once before (see NOTES.md).
+    BTagAlgo btag_algo_kind = ParseBTagAlgo(jet_btag_conf);
+    if (btag_algo_kind == BTagAlgo::Unknown) {
         std::cerr << "[WARNING] Unknown b-tag algorithm in Jet_btag: " << jet_btag_conf << std::endl;
     }
+    std::string btag_algo = BTagAlgoToString(btag_algo_kind);
+    std::string btag_wp = "";
 
     char last = jet_btag_conf.back();
     if (last == 'L' || last == 'l') btag_wp = "Loose";
@@ -375,9 +402,9 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     std::string btag_tagger;
     if (reader->Check("BTagTaggerName")) {
         btag_tagger = reader->GetText("BTagTaggerName");
-    } else if (btag_algo == "DeepJet") {
+    } else if (btag_algo_kind == BTagAlgo::DeepJet) {
         btag_tagger = "deepJet_" + btag_sf_type_;
-    } else if (btag_algo == "UParTAK4") {
+    } else if (btag_algo_kind == BTagAlgo::UParTAK4) {
         // Confirmed from the user's actual btagging.json.gz: the corrections
         // are named "UParTAK4_comb" (b/c-jet SF) and "UParTAK4_light"
         // (light-jet SF) - NOT "particleTransformerAK4_<type>" as originally
@@ -1232,9 +1259,50 @@ void SSBCorrections::InitBtagSFCorrection(const std::string& json_path,
     // Load corrections with generic keys
     btag_corrections_["heavy"] = cset->at(heavy_flavor_name);
     btag_corrections_["light"] = cset->at(light_flavor_name);
-    
-    std::cout << "[SSBCorrections] Loaded corrections: " 
+
+    std::cout << "[SSBCorrections] Loaded corrections: "
               << heavy_flavor_name << " and " << light_flavor_name << std::endl;
+
+    // UParTAK4_wp_values: lets Jet_btag="UParTM" alone determine the numeric
+    // discriminant cut (via GetBtagWPCut()) instead of also requiring a
+    // manually-copied "BTagDiscCut" config value - confirmed present in the
+    // real btagging.json.gz (item 13 in NOTES.md), just not wired in until
+    // now. Optional/try-catch guarded like every other non-essential
+    // correction here: if this ever fails to load or evaluate, Analysis.cpp
+    // falls back to requiring the config value, exactly like before this was
+    // added - nothing regresses if the lookup doesn't pan out.
+    if (isUParT) {
+        std::string wpValuesName = tagger_name.substr(0, tagger_name.find('_')) + "_wp_values";
+        btag_wp_values_ = LoadOptionalCorrection<correction::Correction>(
+            [&]() { return cset->at(wpValuesName); },
+            "Could not load '" + wpValuesName +
+            "'. BTagDiscCut must be set explicitly in the config for this tagger.");
+        if (btag_wp_values_) {
+            std::cout << "[INFO] Loaded WP-cut lookup correction ('" << wpValuesName
+                      << "') - Jet_btag's working point letter alone can now determine "
+                      << "BTagDiscCut if it's not set explicitly in the config." << std::endl;
+        }
+    }
+}
+
+double SSBCorrections::GetBtagWPCut(const std::string& wp) const {
+    if (!btag_wp_values_) {
+        return -1.0;
+    }
+    try {
+        // Single input: the working point string, e.g. "L"/"M"/"T" - the
+        // same convention already confirmed working for GetBtagSF()'s own
+        // evaluate() call against this same btagging.json.gz.
+        return btag_wp_values_->evaluate({wp});
+    } catch (const std::exception& e) {
+        std::cerr << "[WARNING] GetBtagWPCut('" << wp << "') failed: " << e.what()
+                  << ". If this is an input-count/type mismatch, the wp_values correction's "
+                  << "actual schema differs from the single-string-input assumption here - "
+                  << "check with `python3 -c \"import correctionlib; "
+                  << "c=correctionlib.CorrectionSet.from_file('btagging.json.gz'); "
+                  << "print(c['UParTAK4_wp_values'].inputs)\"`." << std::endl;
+        return -1.0;
+    }
 }
 
 std::string SSBCorrections::getBtagCorrectionName(int flavor) const {

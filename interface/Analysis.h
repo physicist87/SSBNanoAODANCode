@@ -36,6 +36,7 @@
 // NanoAOD branch reading (version-agnostic: handles NanoAOD storage-type
 // changes and renames between versions so this class doesn't have to)
 #include "./NanoAODBranchReader.h"
+#include "./JetID.h"
 
 
 class Analysis {
@@ -138,14 +139,13 @@ private:
 
     // ------------------------------------------------------------------
     // NanoAODv15 switched the Jet collection to AK4 Puppi jets and removed
-    // the Jet_jetId flag. These reimplement the POG-recommended tight / tight
-    // lepton-veto working points from the jet energy fractions directly.
-    // idx is the index into the *raw* NanoAOD Jet collection (not v_jet_idx).
+    // the Jet_jetId flag. The POG-recommended tight / tight lepton-veto
+    // working-point logic (from jet energy fractions directly) now lives in
+    // JetID (interface/JetID.h, src/JetID.cpp) - PassConfiguredJetId()
+    // constructs one and delegates, dispatching on the "Jet_ID" config value
+    // (JetId: "PFTight" or "PFTightLepVeto"). idx is the index into the
+    // *raw* NanoAOD Jet collection (not v_jet_idx).
     // ------------------------------------------------------------------
-    bool PassJetIdTight(int idx) const;
-    bool PassJetIdTightLepVeto(int idx) const;
-    // Dispatches to PassJetIdTight/PassJetIdTightLepVeto based on the
-    // "Jet_ID" config value (JetId: "PFTight" or "PFTightLepVeto").
     bool PassConfiguredJetId(int idx) const;
 
     std::string removeSubstring(std::string &str, const std::string &keyword);
@@ -430,7 +430,7 @@ private:
     double el_id_jetcl_2;
 
     /// BTag -- Variables ///
-    std::string btag_algo_;     // "DeepCSV", "DeepJet", "CSVv2"
+    BTagAlgo btag_algo_;  // canonical enum - see SSBCorrections.h ParseBTagAlgo()/BTagAlgoToString()
     std::string btag_wp_; // "L", "M", "T"
 
 

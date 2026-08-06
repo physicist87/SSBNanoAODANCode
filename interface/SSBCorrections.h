@@ -18,6 +18,31 @@ using correction::CompoundCorrection;
 // Forward declarations
 class TextReader;
 
+// B-tag algorithm identifier - the single canonical enum shared between
+// SSBCorrections.cpp's constructor (tagger-name/eff-filename dispatch) and
+// Analysis.cpp's btag_algo_ member (eff-histogram/file lookup, BTagDiscCut
+// auto-derivation). Previously each file independently re-parsed the
+// Jet_btag config string ("deepJetM", "UParTM", ...) into its own local
+// std::string, and they drifted out of sync once in practice - Analysis.cpp's
+// dispatch stayed on the old "UParT" string after SSBCorrections.cpp moved to
+// "UParTAK4" for the real .root filenames/histogram names, silently falling
+// through to a broken branch (caught before it shipped - see NOTES.md).
+// ParseBTagAlgo()/BTagAlgoToString() are now the only place this mapping is
+// defined, so a future retagger (e.g. a PNet migration) only needs one edit.
+enum class BTagAlgo { DeepCSV, DeepJet, UParTAK4, CSVv2, Unknown };
+
+// Parses a Jet_btag config string (e.g. "deepJetM", "UParTM", "pfCSVV2L")
+// into the algorithm it names. Looks only at the algorithm portion, not the
+// trailing working-point letter.
+BTagAlgo ParseBTagAlgo(const std::string& jetBtagConfig);
+
+// Canonical string form of a BTagAlgo - used only where a string is
+// structurally required (b-tag efficiency ROOT filenames
+// "btagEff_<algo>.root", in-file histogram names "eff_<algo>_<flav>_<wp>",
+// and eff_histograms_ map keys). Branching logic should compare the enum
+// directly with == instead of stringifying and comparing.
+std::string BTagAlgoToString(BTagAlgo algo);
+
 // A utility class for loading and applying correctionlib-based
 // JEC, JER, and muon scale factors using configuration
 class SSBCorrections {
@@ -213,6 +238,18 @@ public:
     std::string GetJetVetoType() const;
     void InitBtagSFCorrection(const std::string& json_path, const std::string& tagger_name);
     float GetBtagSF(float pt, float eta, int flav, const std::string& wp, const std::string& syst = "nominal") const;
+    // Looks up the numeric discriminant cut for a working point directly from
+    // btagging.json.gz's "<tagger>_wp_values" correction (confirmed present
+    // for UParTAK4: "UParTAK4_wp_values", evaluate({wp}) with the same
+    // single-letter "L"/"M"/"T" wp string already used successfully by
+    // GetBtagSF's own evaluate() call against this same json). Lets
+    // Jet_btag="UParTM" alone determine the cut instead of also requiring a
+    // manually-copied "BTagDiscCut" config value. Returns -1.0 (a value that
+    // fails every real cut) if the correction isn't loaded or evaluate()
+    // fails for any reason - callers should treat that as "lookup didn't
+    // work, fall back to requiring an explicit BTagDiscCut", not as a valid
+    // (if permissive) cut of -1.0.
+    double GetBtagWPCut(const std::string& wp) const;
     //void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo);
     void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo, const std::string& wp);
     float GetMCBtagEfficiency(float pt, float eta, int flav, const std::string& algo, const std::string& wp) const;
@@ -276,6 +313,9 @@ private:
 
     // B-tagging corrections map
     std::map<std::string, std::shared_ptr<const correction::Correction>> btag_corrections_;
+    // "<tagger>_wp_values" correction (currently only loaded for UParTAK4 -
+    // see InitBtagSFCorrection) - optional, nullptr if not present/loadable.
+    std::shared_ptr<const correction::Correction> btag_wp_values_;
 
     // Helper function to get appropriate correction name
     std::string getBtagCorrectionName(int flavor) const;

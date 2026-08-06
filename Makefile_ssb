@@ -52,6 +52,7 @@ GLIBS           = $(ROOTGLIBS) -L/usr/X11R6/lib -lXext -lGenVector
 OBJS = \
     CommonTools.o \
     NanoAODBranchReader.o \
+    JetID.o \
     Analysis.o \
     main_ssb.o \
     TextReader.o \
@@ -70,6 +71,7 @@ OBJS = \
 INPUTS = \
     ./interface/Analysis.h ./src/Analysis.cpp main_ssb.cpp \
     ./interface/NanoAODBranchReader.h ./src/NanoAODBranchReader.cpp \
+    ./interface/JetID.h ./src/JetID.cpp \
     ./TextReader/TextReader.hpp ./TextReader/TextReader.cpp \
     ./KinSolv/utils.h ./KinSolv/utils.cc \
     ./KinSolv/analysisUtils.h ./KinSolv/analysisUtils.cc \
@@ -90,11 +92,14 @@ all: $(OBJS)
 main_ssb.o: main_ssb.cpp $(INPUTS)
 	$(CC) $(CXXFLAGS) -c main_ssb.cpp
 
-Analysis.o: ./interface/Analysis.h ./src/Analysis.cpp ./interface/NanoAODBranchReader.h
+Analysis.o: ./interface/Analysis.h ./src/Analysis.cpp ./interface/NanoAODBranchReader.h ./interface/JetID.h
 	$(CC) $(CXXFLAGS) -c ./src/Analysis.cpp
 
 NanoAODBranchReader.o: ./interface/NanoAODBranchReader.h ./src/NanoAODBranchReader.cpp
 	$(CC) $(CXXFLAGS) -c ./src/NanoAODBranchReader.cpp
+
+JetID.o: ./interface/JetID.h ./src/JetID.cpp ./interface/NanoAODBranchReader.h
+	$(CC) $(CXXFLAGS) -c ./src/JetID.cpp
 
 CommonTools.o: CommonTools.hpp CommonTools.cpp
 	$(CC) $(CXXFLAGS) -c CommonTools.cpp

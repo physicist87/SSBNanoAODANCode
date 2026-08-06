@@ -90,91 +90,19 @@ Analysis::~Analysis() {
 // NanoAOD branch" and "what does this analysis do with it".
 
 // ------------------------------------------------------------------
-// NanoAODv15 PUPPI jet ID (Jet_jetId removed; POG pseudocode reimplemented
-// directly from the jet energy fractions/multiplicities). See CMS NanoAODv15
-// documentation for the source pseudocode this mirrors. idx indexes the raw
-// Jet collection (same indexing as jets_pt/jets_eta/etc).
+// NanoAODv15 PUPPI jet ID logic (Jet_jetId removed upstream; POG pseudocode
+// reimplemented from the jet energy fractions/multiplicities) now lives in
+// JetID (interface/JetID.h, src/JetID.cpp) - extracted out of this file
+// (same precedent as NanoAODBranchReader) so it can be read/reasoned about
+// independently of the rest of the event loop. Constructed fresh here
+// (cheap: a reference + TString copy) rather than kept as an Analysis
+// member, since RunPeriod isn't populated yet at Analysis's own
+// construction time - it's read from config in SetVariables(), which runs
+// before the event loop that actually calls PassConfiguredJetId().
 // ------------------------------------------------------------------
-bool Analysis::PassJetIdTight(int idx) const {
-    auto getF = [this, idx](const char *name) -> float {
-        auto it = branchReader_.floatVectors.find(name);
-        if (it == branchReader_.floatVectors.end() || !it->second || idx >= it->second->GetSize()) return 0.0f;
-        return it->second->At(idx);
-    };
-    // chMultiplicity / neMultiplicity are UChar_t in NanoAODv15
-    int chMult = static_cast<int>(branchReader_.GetIntArrayValue("Jet_chMultiplicity", idx));
-    int neMult = static_cast<int>(branchReader_.GetIntArrayValue("Jet_neMultiplicity", idx));
-
-    float eta    = getF("Jet_eta");
-    float neHEF  = getF("Jet_neHEF");
-    float neEmEF = getF("Jet_neEmEF");
-    float chHEF  = getF("Jet_chHEF");
-
-    float absEta = fabs(eta);
-    bool passTight = false;
-
-    if (RunPeriod.Contains("2016")) {
-        if (absEta <= 2.4) {
-            passTight = (neHEF < 0.9) && (neEmEF < 0.9) && ((chMult + neMult) > 1) && (chHEF > 0.0) && (chMult > 0);
-        } else if (absEta <= 2.7) {
-            passTight = (neHEF < 0.98) && (neEmEF < 0.99);
-        } else if (absEta <= 3.0) {
-            passTight = (neMult >= 1);
-        } else {
-            passTight = (neMult > 2) && (neEmEF < 0.9);
-        }
-    } else if (RunPeriod.Contains("2017") || RunPeriod.Contains("2018")) {
-        if (absEta <= 2.6) {
-            passTight = (neHEF < 0.9) && (neEmEF < 0.9) && ((chMult + neMult) > 1) && (chHEF > 0.0) && (chMult > 0);
-        } else if (absEta <= 2.7) {
-            passTight = (neHEF < 0.90) && (neEmEF < 0.99);
-        } else if (absEta <= 3.0) {
-            passTight = (neHEF < 0.9999);
-        } else {
-            passTight = (neMult > 2) && (neEmEF < 0.9);
-        }
-    } else {
-        std::cerr << "[WARNING] PassJetIdTight: no PUPPI jet ID formula defined for RunPeriod "
-                  << RunPeriod << " - treating jet as failing tight ID." << std::endl;
-        return false;
-    }
-
-    return passTight;
-}
-
-bool Analysis::PassJetIdTightLepVeto(int idx) const {
-    if (!PassJetIdTight(idx)) return false;
-
-    auto getF = [this, idx](const char *name) -> float {
-        auto it = branchReader_.floatVectors.find(name);
-        if (it == branchReader_.floatVectors.end() || !it->second || idx >= it->second->GetSize()) return 0.0f;
-        return it->second->At(idx);
-    };
-
-    float eta    = getF("Jet_eta");
-    float muEF   = getF("Jet_muEF");
-    float chEmEF = getF("Jet_chEmEF");
-    float absEta = fabs(eta);
-
-    // 2016: TightLepVeto only differs from Tight below |eta| <= 2.4
-    // 2017/2018: below |eta| <= 2.7 (per the pasted pseudocode)
-    float etaBoundary = RunPeriod.Contains("2016") ? 2.4 : 2.7;
-
-    if (absEta <= etaBoundary) {
-        return (muEF < 0.8) && (chEmEF < 0.8);
-    }
-    return true; // outside the boundary, TightLepVeto == Tight
-}
-
 bool Analysis::PassConfiguredJetId(int idx) const {
-    if (JetId == "PFTightLepVeto") return PassJetIdTightLepVeto(idx);
-    if (JetId == "PFTight")        return PassJetIdTight(idx);
-    // "PFLoose"/"PFLooseLepVeto" (2016 v9-era working points) no longer exist
-    // for PUPPI jets - the pasted CMS pseudocode only defines Tight/TightLepVeto.
-    std::cerr << "[WARNING] PassConfiguredJetId: Jet_ID='" << JetId
-              << "' has no PUPPI jet ID implementation - update configs to "
-              << "PFTight or PFTightLepVeto. Defaulting to PFTightLepVeto." << std::endl;
-    return PassJetIdTightLepVeto(idx);
+    JetID jetId(branchReader_, RunPeriod);
+    return jetId.PassConfigured(idx, JetId);
 }
 
 
@@ -540,7 +468,7 @@ void Analysis::SetObjectVariable() {
     // jets_Id/jet_id (the old integer-bitmask working point) are no longer
     // populated -- jet ID is now evaluated per-jet via PassConfiguredJetId(),
     // which reimplements the Tight/TightLepVeto formulas directly from the
-    // jet energy fractions (see PassJetIdTight/PassJetIdTightLepVeto).
+    // jet energy fractions (see the JetID class, interface/JetID.h).
     jets_Id = nullptr;
     jets_puId = branchReader_.JetPuIdAvailable() ? branchReader_.intVectors["Jet_puId"].get() : nullptr; // may be null (removed in v15)
 
@@ -602,21 +530,12 @@ void Analysis::SetObjectVariable() {
     }
 
 
-    // Parse B-tagging algorithm from JetbTag
-    btag_algo_ = "DeepCSV";  // Default
-    if (TString(JetbTag).Contains("deepCSV")) {
-        btag_algo_ = "DeepCSV";
-    } else if (TString(JetbTag).Contains("deepJet")) {
-        btag_algo_ = "DeepJet";
-    } else if (TString(JetbTag).Contains("UParT")) {
-        // Must match SSBCorrections.cpp's btag_algo exactly - both are used
-        // as the eff-histogram name prefix "eff_<algo>_<flav>_<wp>", and a
-        // real run confirmed the histograms inside btagEff_UParTAK4.root are
-        // named with the "UParTAK4" prefix, not "UParT".
-        btag_algo_ = "UParTAK4";
-    } else if (TString(JetbTag).Contains("pfCSVV2")) {
-        btag_algo_ = "CSVv2";
-    } else {
+    // Parse B-tagging algorithm from JetbTag via the single canonical
+    // ParseBTagAlgo() (SSBCorrections.h), shared with SSBCorrections.cpp's
+    // own constructor - this can't drift out of sync with it again the way
+    // it did once before (see NOTES.md).
+    btag_algo_ = ParseBTagAlgo(JetbTag.Data());  // JetbTag is a TString - ParseBTagAlgo takes std::string
+    if (btag_algo_ == BTagAlgo::Unknown) {
         std::cerr << "Unknown b-tagging algorithm in JetbTag: " << JetbTag << std::endl;
     }
     
@@ -656,13 +575,33 @@ void Analysis::SetObjectVariable() {
             std::cout << "[INFO] Using BTagDiscCut from config: " << bdisccut << std::endl;
             printedBTagDiscCutInfo = true;
         }
-    } else if (btag_algo_ == "UParTAK4") {
-        std::cerr << "[ERROR] Jet_btag='" << JetbTag << "' (UParT) has no hardcoded working-point "
-                  << "cut value, and no 'BTagDiscCut' was set in the config. Add e.g. "
-                  << "'BTagDiscCut : 0.xxxx' to the config with the CMS BTV-recommended UParT "
-                  << "AK4 Medium cut for this campaign (check your btagging.json.gz - working "
-                  << "point cuts are usually documented alongside the SF corrections)." << std::endl;
-        bdisccut = -1.0; // fails NumbJetCut/BTaggingSFApply safely rather than tagging everything
+    } else if (btag_algo_ == BTagAlgo::UParTAK4) {
+        // Look up the cut directly from btagging.json.gz's UParTAK4_wp_values
+        // correction instead of requiring it to also be copied into the
+        // config by hand - Jet_btag="UParTM" alone is then enough. Falls
+        // back to the old hard-failure behavior if the lookup isn't
+        // available (correction missing/failed to load - see
+        // InitBtagSFCorrection - or evaluate() rejects the wp string).
+        double lookedUpCut = SSBCorr->GetBtagWPCut(btag_wp_);
+        static bool printedBTagWPCutInfo = false;
+        if (lookedUpCut > 0.0) {
+            bdisccut = lookedUpCut;
+            if (!printedBTagWPCutInfo) {
+                std::cout << "[INFO] BTagDiscCut not set in config - looked up " << bdisccut
+                          << " from btagging.json.gz's UParTAK4_wp_values for WP='" << btag_wp_
+                          << "'." << std::endl;
+                printedBTagWPCutInfo = true;
+            }
+        } else {
+            std::cerr << "[ERROR] Jet_btag='" << JetbTag << "' (UParT) has no hardcoded working-point "
+                      << "cut value, 'BTagDiscCut' was not set in the config, AND the "
+                      << "UParTAK4_wp_values lookup didn't return a usable cut (see any "
+                      << "[WARNING] above from GetBtagWPCut/InitBtagSFCorrection for why). Add e.g. "
+                      << "'BTagDiscCut : 0.xxxx' to the config with the CMS BTV-recommended UParT "
+                      << "AK4 " << btag_wp_ << " cut for this campaign as a manual fallback."
+                      << std::endl;
+            bdisccut = -1.0; // fails NumbJetCut/BTaggingSFApply safely rather than tagging everything
+        }
     }
 
     if (!haveConfigBTagDiscCut)
@@ -3014,10 +2953,13 @@ void Analysis::BTaggingSFApply() {
     
     // Calculate B-tagging event weight
     try {
+        // ComputeBTagEventWeight needs a string (it builds eff_histograms_ map
+        // keys/eff-histogram name lookups from it) - BTagAlgoToString() is the
+        // canonical enum->string conversion (SSBCorrections.h), so this can't
+        // silently diverge from the parsing in the constructor above.
         btag_sf_weight_ = SSBCorr->ComputeBTagEventWeight(
             jet_pts, jet_etas, jet_flavors, jet_isTagged,
-            //btag_algo, btag_wp, syst_variation
-            btag_algo_, btag_wp_, syst_variation
+            BTagAlgoToString(btag_algo_), btag_wp_, syst_variation
         );
         
         // Apply weight
