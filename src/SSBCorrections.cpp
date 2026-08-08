@@ -54,6 +54,159 @@ std::string BTagAlgoToString(BTagAlgo algo) {
     }
 }
 
+namespace {
+// CMS-style JES full-uncertainty-set NP name -> correctionlib key, sourced
+// directly from the official JERC application tutorial's JecConfigAK4.json
+// (ApplyOnMC.JesUncertaintySet.JesUncertaintySetFull, per year) - NOT derived
+// by string-substitution into jec_name, since the per-source naming isn't
+// guaranteed to follow the same pattern as the L1FastJet/L2Relative names
+// (confirmed: Reduced-set sources get a "Regrouped_" prefix that Full-set
+// sources don't; NP names carry a year suffix, e.g. "..._2018", that the
+// correction key itself does not). Full set only for now (27 sources per
+// year) - Reduced/Total deferred per your instruction.
+const std::map<std::string, std::string> kJesFullSetUnc_2016Pre = {
+    {"CMS_scale_j_AbsoluteMPFBias", "Summer20UL16APVNanoV15_V1_MC_AbsoluteMPFBias_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteScale", "Summer20UL16APVNanoV15_V1_MC_AbsoluteScale_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteStat_2016", "Summer20UL16APVNanoV15_V1_MC_AbsoluteStat_AK4PFPuppi"},
+    {"CMS_scale_j_FlavorQCD", "Summer20UL16APVNanoV15_V1_MC_FlavorQCD_AK4PFPuppi"},
+    {"CMS_scale_j_Fragmentation", "Summer20UL16APVNanoV15_V1_MC_Fragmentation_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpDataMC", "Summer20UL16APVNanoV15_V1_MC_PileUpDataMC_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtBB", "Summer20UL16APVNanoV15_V1_MC_PileUpPtBB_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC1", "Summer20UL16APVNanoV15_V1_MC_PileUpPtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC2", "Summer20UL16APVNanoV15_V1_MC_PileUpPtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtHF", "Summer20UL16APVNanoV15_V1_MC_PileUpPtHF_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtRef", "Summer20UL16APVNanoV15_V1_MC_PileUpPtRef_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeFSR", "Summer20UL16APVNanoV15_V1_MC_RelativeFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC1_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeJEREC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC2_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeJEREC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJERHF", "Summer20UL16APVNanoV15_V1_MC_RelativeJERHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtBB", "Summer20UL16APVNanoV15_V1_MC_RelativePtBB_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC1_2016", "Summer20UL16APVNanoV15_V1_MC_RelativePtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC2_2016", "Summer20UL16APVNanoV15_V1_MC_RelativePtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtHF", "Summer20UL16APVNanoV15_V1_MC_RelativePtHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeBal", "Summer20UL16APVNanoV15_V1_MC_RelativeBal_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeSample_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeSample_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatEC_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeStatEC_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatFSR_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeStatFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatHF_2016", "Summer20UL16APVNanoV15_V1_MC_RelativeStatHF_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionECAL", "Summer20UL16APVNanoV15_V1_MC_SinglePionECAL_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionHCAL", "Summer20UL16APVNanoV15_V1_MC_SinglePionHCAL_AK4PFPuppi"},
+    {"CMS_scale_j_TimePtEta_2016", "Summer20UL16APVNanoV15_V1_MC_TimePtEta_AK4PFPuppi"},
+};
+
+const std::map<std::string, std::string> kJesFullSetUnc_2016Post = {
+    {"CMS_scale_j_AbsoluteMPFBias", "Summer20UL16NanoV15_V1_MC_AbsoluteMPFBias_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteScale", "Summer20UL16NanoV15_V1_MC_AbsoluteScale_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteStat_2016", "Summer20UL16NanoV15_V1_MC_AbsoluteStat_AK4PFPuppi"},
+    {"CMS_scale_j_FlavorQCD", "Summer20UL16NanoV15_V1_MC_FlavorQCD_AK4PFPuppi"},
+    {"CMS_scale_j_Fragmentation", "Summer20UL16NanoV15_V1_MC_Fragmentation_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpDataMC", "Summer20UL16NanoV15_V1_MC_PileUpDataMC_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtBB", "Summer20UL16NanoV15_V1_MC_PileUpPtBB_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC1", "Summer20UL16NanoV15_V1_MC_PileUpPtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC2", "Summer20UL16NanoV15_V1_MC_PileUpPtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtHF", "Summer20UL16NanoV15_V1_MC_PileUpPtHF_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtRef", "Summer20UL16NanoV15_V1_MC_PileUpPtRef_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeFSR", "Summer20UL16NanoV15_V1_MC_RelativeFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC1_2016", "Summer20UL16NanoV15_V1_MC_RelativeJEREC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC2_2016", "Summer20UL16NanoV15_V1_MC_RelativeJEREC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJERHF", "Summer20UL16NanoV15_V1_MC_RelativeJERHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtBB", "Summer20UL16NanoV15_V1_MC_RelativePtBB_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC1_2016", "Summer20UL16NanoV15_V1_MC_RelativePtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC2_2016", "Summer20UL16NanoV15_V1_MC_RelativePtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtHF", "Summer20UL16NanoV15_V1_MC_RelativePtHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeBal", "Summer20UL16NanoV15_V1_MC_RelativeBal_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeSample_2016", "Summer20UL16NanoV15_V1_MC_RelativeSample_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatEC_2016", "Summer20UL16NanoV15_V1_MC_RelativeStatEC_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatFSR_2016", "Summer20UL16NanoV15_V1_MC_RelativeStatFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatHF_2016", "Summer20UL16NanoV15_V1_MC_RelativeStatHF_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionECAL", "Summer20UL16NanoV15_V1_MC_SinglePionECAL_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionHCAL", "Summer20UL16NanoV15_V1_MC_SinglePionHCAL_AK4PFPuppi"},
+    {"CMS_scale_j_TimePtEta_2016", "Summer20UL16NanoV15_V1_MC_TimePtEta_AK4PFPuppi"},
+};
+
+const std::map<std::string, std::string> kJesFullSetUnc_2017 = {
+    {"CMS_scale_j_AbsoluteMPFBias", "Summer20UL17NanoV15_V1_MC_AbsoluteMPFBias_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteScale", "Summer20UL17NanoV15_V1_MC_AbsoluteScale_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteStat_2017", "Summer20UL17NanoV15_V1_MC_AbsoluteStat_AK4PFPuppi"},
+    {"CMS_scale_j_FlavorQCD", "Summer20UL17NanoV15_V1_MC_FlavorQCD_AK4PFPuppi"},
+    {"CMS_scale_j_Fragmentation", "Summer20UL17NanoV15_V1_MC_Fragmentation_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpDataMC", "Summer20UL17NanoV15_V1_MC_PileUpDataMC_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtBB", "Summer20UL17NanoV15_V1_MC_PileUpPtBB_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC1", "Summer20UL17NanoV15_V1_MC_PileUpPtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC2", "Summer20UL17NanoV15_V1_MC_PileUpPtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtHF", "Summer20UL17NanoV15_V1_MC_PileUpPtHF_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtRef", "Summer20UL17NanoV15_V1_MC_PileUpPtRef_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeFSR", "Summer20UL17NanoV15_V1_MC_RelativeFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC1_2017", "Summer20UL17NanoV15_V1_MC_RelativeJEREC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC2_2017", "Summer20UL17NanoV15_V1_MC_RelativeJEREC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJERHF", "Summer20UL17NanoV15_V1_MC_RelativeJERHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtBB", "Summer20UL17NanoV15_V1_MC_RelativePtBB_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC1_2017", "Summer20UL17NanoV15_V1_MC_RelativePtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC2_2017", "Summer20UL17NanoV15_V1_MC_RelativePtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtHF", "Summer20UL17NanoV15_V1_MC_RelativePtHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeBal", "Summer20UL17NanoV15_V1_MC_RelativeBal_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeSample_2017", "Summer20UL17NanoV15_V1_MC_RelativeSample_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatEC_2017", "Summer20UL17NanoV15_V1_MC_RelativeStatEC_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatFSR_2017", "Summer20UL17NanoV15_V1_MC_RelativeStatFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatHF_2017", "Summer20UL17NanoV15_V1_MC_RelativeStatHF_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionECAL", "Summer20UL17NanoV15_V1_MC_SinglePionECAL_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionHCAL", "Summer20UL17NanoV15_V1_MC_SinglePionHCAL_AK4PFPuppi"},
+    {"CMS_scale_j_TimePtEta_2017", "Summer20UL17NanoV15_V1_MC_TimePtEta_AK4PFPuppi"},
+};
+
+const std::map<std::string, std::string> kJesFullSetUnc_2018 = {
+    {"CMS_scale_j_AbsoluteMPFBias", "Summer20UL18NanoV15_V1_MC_AbsoluteMPFBias_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteScale", "Summer20UL18NanoV15_V1_MC_AbsoluteScale_AK4PFPuppi"},
+    {"CMS_scale_j_AbsoluteStat_2018", "Summer20UL18NanoV15_V1_MC_AbsoluteStat_AK4PFPuppi"},
+    {"CMS_scale_j_FlavorQCD", "Summer20UL18NanoV15_V1_MC_FlavorQCD_AK4PFPuppi"},
+    {"CMS_scale_j_Fragmentation", "Summer20UL18NanoV15_V1_MC_Fragmentation_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpDataMC", "Summer20UL18NanoV15_V1_MC_PileUpDataMC_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtBB", "Summer20UL18NanoV15_V1_MC_PileUpPtBB_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC1", "Summer20UL18NanoV15_V1_MC_PileUpPtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtEC2", "Summer20UL18NanoV15_V1_MC_PileUpPtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtHF", "Summer20UL18NanoV15_V1_MC_PileUpPtHF_AK4PFPuppi"},
+    {"CMS_scale_j_PileUpPtRef", "Summer20UL18NanoV15_V1_MC_PileUpPtRef_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeFSR", "Summer20UL18NanoV15_V1_MC_RelativeFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC1_2018", "Summer20UL18NanoV15_V1_MC_RelativeJEREC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJEREC2_2018", "Summer20UL18NanoV15_V1_MC_RelativeJEREC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeJERHF", "Summer20UL18NanoV15_V1_MC_RelativeJERHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtBB", "Summer20UL18NanoV15_V1_MC_RelativePtBB_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC1_2018", "Summer20UL18NanoV15_V1_MC_RelativePtEC1_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtEC2_2018", "Summer20UL18NanoV15_V1_MC_RelativePtEC2_AK4PFPuppi"},
+    {"CMS_scale_j_RelativePtHF", "Summer20UL18NanoV15_V1_MC_RelativePtHF_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeBal", "Summer20UL18NanoV15_V1_MC_RelativeBal_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeSample_2018", "Summer20UL18NanoV15_V1_MC_RelativeSample_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatEC_2018", "Summer20UL18NanoV15_V1_MC_RelativeStatEC_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatFSR_2018", "Summer20UL18NanoV15_V1_MC_RelativeStatFSR_AK4PFPuppi"},
+    {"CMS_scale_j_RelativeStatHF_2018", "Summer20UL18NanoV15_V1_MC_RelativeStatHF_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionECAL", "Summer20UL18NanoV15_V1_MC_SinglePionECAL_AK4PFPuppi"},
+    {"CMS_scale_j_SinglePionHCAL", "Summer20UL18NanoV15_V1_MC_SinglePionHCAL_AK4PFPuppi"},
+    {"CMS_scale_j_TimePtEta_2018", "Summer20UL18NanoV15_V1_MC_TimePtEta_AK4PFPuppi"},
+};
+
+// Resolves a CMS-style NP name (e.g. "CMS_scale_j_AbsoluteScale") to the
+// correctionlib key for the given RunPeriod, using the tables above. Empty
+// string return means "not found" - caller (constructor) treats that as a
+// hard warning + no systematic loaded, same as every other optional
+// correction in this file.
+std::string LookupJesFullSetUncertaintyKey(const std::string& runPeriod, const std::string& npName) {
+    const std::map<std::string, std::string>* table = nullptr;
+    if (runPeriod.find("2016PreVFP") != std::string::npos) {
+        table = &kJesFullSetUnc_2016Pre;
+    } else if (runPeriod.find("2016PostVFP") != std::string::npos) {
+        table = &kJesFullSetUnc_2016Post;
+    } else if (runPeriod.find("2017") != std::string::npos) {
+        table = &kJesFullSetUnc_2017;
+    } else if (runPeriod.find("2018") != std::string::npos) {
+        table = &kJesFullSetUnc_2018;
+    } else {
+        return "";
+    }
+    auto it = table->find(npName);
+    return (it != table->end()) ? it->second : "";
+}
+}  // namespace
+
 SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileName) {
     std::cout << "TextReader in SSBCorrections ! " << std::endl;
     std::cout << "Current directory: " << std::filesystem::current_path() << std::endl;
@@ -243,6 +396,42 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         ". Type-1 MET recomputation will fall back to a (fullyCorrected-raw) delta instead "
         "of the CMS-recommended (fullyCorrected-L1only) one - this is a known-less-accurate "
         "fallback, not the standard recipe.");
+
+    // JES full-uncertainty-set systematic (2026-08) - see jes_unc_source_'s
+    // comment in the header for why this lives here instead of being
+    // threaded through as a call parameter. JESSys/JESSysDir are brand new
+    // config keys - Check() first, same as DoJES/DoJER/JERSys, so an old
+    // config without them just gets "no JES systematic" (nullptr
+    // jes_unc_source_), not a printed "Cannot find" from GetText/GetBool.
+    // "nominal"/empty JESSys is the normal case (no systematic pass).
+    {
+        std::string jesSys = reader->Check("JESSys") ? reader->GetText("JESSys") : "nominal";
+        jes_sys_dir_ = reader->Check("JESSysDir") ? reader->GetText("JESSysDir") : "up";
+        if (jesSys != "nominal" && !jesSys.empty()) {
+            std::string uncKey = LookupJesFullSetUncertaintyKey(RunPeriod, jesSys);
+            if (uncKey.empty()) {
+                std::cerr << "[WARNING] JESSys=\"" << jesSys << "\" not found in the Full-set "
+                          << "NP-name table for RunPeriod=\"" << RunPeriod << "\" (see "
+                          << "LookupJesFullSetUncertaintyKey in this file) - no JES systematic "
+                          << "will be applied. Check spelling (e.g. \"CMS_scale_j_AbsoluteScale\") "
+                          << "and that this RunPeriod has a Full-set table." << std::endl;
+            } else if (jes_sys_dir_ != "up" && jes_sys_dir_ != "down") {
+                std::cerr << "[WARNING] JESSysDir=\"" << jes_sys_dir_ << "\" is not \"up\" or "
+                          << "\"down\" - no JES systematic will be applied." << std::endl;
+            } else {
+                jes_unc_source_ = LoadOptionalCorrection<correction::Correction>(
+                    [&]() { return jec_set->at(uncKey); },
+                    "Could not load JES uncertainty-source correction '" + uncKey +
+                    "' (JESSys=" + jesSys + ") from " + jec_path + ". No JES systematic will be applied.");
+                if (jes_unc_source_) {
+                    std::cout << "[INFO] Loaded JES uncertainty source '" << uncKey
+                              << "' for JESSys=" << jesSys << " JESSysDir=" << jes_sys_dir_
+                              << " - applying to GetCorrectedJetPt() (physics jets + Type-1 MET)."
+                              << std::endl;
+                }
+            }
+        }
+    }
 
     auto jer_set = correction::CorrectionSet::from_file(jsonDir + jer_path);
     jer_ = jer_set->at(jer_res_name);
@@ -558,7 +747,26 @@ double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area,
         : jec_->evaluate({area, eta, raw_pt, rho});
     //std::cout << "sf in GetCorrectedJetPt : " << sf << std::endl;
 
-    return raw_pt * sf;
+    double corrected_pt = raw_pt * sf;
+
+    // JES full-uncertainty-set systematic (2026-08) - applied here, after
+    // nominal JEC, matching the CMS JERC tutorial's Applier::jesComponentSyst:
+    // evaluate({eta, ptAfterJes}) -> a fractional "scale", combined as
+    // pt*(1+scale) for up / pt*(1-scale) for down. Living inside this one
+    // function means every caller of GetCorrectedJetPt() (physics jets in
+    // ApplyJetCorrections(), and both jet loops in
+    // ApplyType1METWithCorrT1()'s Type-1 MET calculation) picks up the same
+    // shift automatically and consistently, without each call site needing
+    // its own systematic-threading logic - see jes_unc_source_'s comment in
+    // the header. No-op (factor 1.0) when no JES systematic was requested
+    // (jes_unc_source_ is nullptr in that case, the default/nominal path).
+    if (jes_unc_source_) {
+        double scale = jes_unc_source_->evaluate({eta, corrected_pt});
+        double factor = (jes_sys_dir_ == "up") ? (1.0 + scale) : (1.0 - scale);
+        corrected_pt *= factor;
+    }
+
+    return corrected_pt;
 }
 
 double SSBCorrections::GetL1CorrectedJetPt(double raw_pt, double eta, double area, double rho) const {
@@ -611,7 +819,8 @@ UInt_t ComputeJerSeed(ULong64_t event, double eta, double phi) {
 }
 }
 
-double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double eta, double phi, double rho,
+double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double gen_eta, double gen_phi,
+                                 double eta, double phi, double rho,
                                  ULong64_t event, const std::string& jer_tag) const {
     // jer_sf_/jer_sfunc_ evaluate({eta, pt}) - confirmed by directly
     // inspecting jet_jerc.json.gz: this is a plain 2-real-input schema, NOT
@@ -626,14 +835,32 @@ double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double eta, doubl
     }
     double resolution = jer_->evaluate({eta, reco_pt, rho});
 
+    // Gen-match re-validation (2026-08 fix, confirmed against the tutorial's
+    // Applier::jerFactor): a caller-supplied gen_pt is only trusted if it
+    // ALSO satisfies dR(jet, gen) < 0.2 AND |reco_pt - gen_pt| <
+    // 3*resolution*reco_pt. Both conditions are checked here, uniformly,
+    // BEFORE either smearing path below runs - the official JERSmear
+    // correctionlib tool's evaluate() schema (JetPt, JetEta, GenPt, Rho,
+    // EventID, JER, JERSF) has no room for gen eta/phi, so it cannot verify
+    // the dR condition itself; the tutorial does both checks in the caller,
+    // never inside the tool, and this matches that exactly.
+    bool matched = false;
+    if (gen_pt >= 0.0) {
+        TLorentzVector jetDir, genDir;
+        jetDir.SetPtEtaPhiM(1.0, eta, phi, 0.0);
+        genDir.SetPtEtaPhiM(1.0, gen_eta, gen_phi, 0.0);
+        double dR = jetDir.DeltaR(genDir);
+        matched = (dR < 0.2) && (std::abs(reco_pt - gen_pt) < 3.0 * resolution * reco_pt);
+    }
+    double genPtForSmear = matched ? gen_pt : -1.0;
+
     if (jer_smear_) {
-        // CMS's official "JERSmear" correctionlib tool - handles the hybrid
-        // method decision (scaling vs. stochastic, including its own
-        // 3-sigma gen-pt consistency check) and the actual random smearing
-        // internally via a deterministic `hashprng` node. Input order per
-        // the CMS JERC ApplicationTutorial's Applier::jerFactor: JetPt,
-        // JetEta, GenPt (-1 if no match), Rho, EventID, JER (resolution), JERSF.
-        double smear = jer_smear_->evaluate({reco_pt, eta, gen_pt, rho,
+        // CMS's official "JERSmear" correctionlib tool - handles the actual
+        // random smearing internally via a deterministic `hashprng` node.
+        // Input order per the CMS JERC ApplicationTutorial's
+        // Applier::jerFactor: JetPt, JetEta, GenPt (-1 if no match, already
+        // validated above), Rho, EventID, JER (resolution), JERSF.
+        double smear = jer_smear_->evaluate({reco_pt, eta, genPtForSmear, rho,
                                               static_cast<int>(event), resolution, sf});
         double corr = (std::isfinite(smear) && smear > 0.0) ? smear : 1.0;
         return std::max(0.0, reco_pt * corr);
@@ -644,12 +871,9 @@ double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double eta, doubl
     // recommended approach (no access to correctionlib's own hashprng
     // internals), but functional and deterministic via a local per-(event,
     // jet) seeded TRandom3 rather than the shared global gRandom.
-    bool useScaling = (gen_pt >= 0.0) &&
-                      (std::abs(reco_pt - gen_pt) < 3.0 * resolution * reco_pt);
-
-    if (useScaling) {
-        double delta_pt = reco_pt - gen_pt;
-        double smeared_pt = gen_pt + sf * delta_pt;
+    if (matched) {
+        double delta_pt = reco_pt - genPtForSmear;
+        double smeared_pt = genPtForSmear + sf * delta_pt;
         return std::max(0.0, smeared_pt);
     }
 
@@ -976,7 +1200,9 @@ float SSBCorrections::GetPUWeight(float nTrueInt, const std::string& systTag) co
 
 float SSBCorrections::MatchGenPt(const TLorentzVector& reco_jet,
                                   const std::vector<TLorentzVector>& gen_jets,
-                                  float maxDR) const {
+                                  float maxDR,
+                                  float* out_eta,
+                                  float* out_phi) const {
     float minDR = maxDR;
     float matched_genpt = -1.0;
 
@@ -985,6 +1211,8 @@ float SSBCorrections::MatchGenPt(const TLorentzVector& reco_jet,
         if (dR < minDR) {
             minDR = dR;
             matched_genpt = gen_jet.Pt();
+            if (out_eta) *out_eta = gen_jet.Eta();
+            if (out_phi) *out_phi = gen_jet.Phi();
         }
     }
     return matched_genpt;
@@ -1001,7 +1229,8 @@ std::vector<TLorentzVector> SSBCorrections::ApplyJetCorrections(
     const std::vector<TLorentzVector>& genJets,
     const std::vector<int>& genJetIndices,
     unsigned int run_number,
-    ULong64_t event_number
+    ULong64_t event_number,
+    const std::string& jerSysTag
 ) const {
     std::vector<TLorentzVector> correctedJets;
     correctedJets.reserve(rawJets.size());
@@ -1037,11 +1266,16 @@ std::vector<TLorentzVector> SSBCorrections::ApplyJetCorrections(
             // valid entry for this jet - SmearJER() falls back to stochastic
             // smearing in that case rather than leaving the jet unsmeared.
             float matched_genpt = -1.0;
+            float matched_geneta = 0.0;
+            float matched_genphi = 0.0;
             if (genJetIndices.size() > i && genJetIndices[i] >= 0 &&
                 static_cast<size_t>(genJetIndices[i]) < genJets.size()) {
-                matched_genpt = genJets[genJetIndices[i]].Pt();
+                matched_genpt  = genJets[genJetIndices[i]].Pt();
+                matched_geneta = genJets[genJetIndices[i]].Eta();
+                matched_genphi = genJets[genJetIndices[i]].Phi();
             }
-            corrected_pt = SmearJER(corrected_pt, matched_genpt, eta, phi, rho, event_number, "nominal");
+            corrected_pt = SmearJER(corrected_pt, matched_genpt, matched_geneta, matched_genphi,
+                                     eta, phi, rho, event_number, jerSysTag);
         }
 
         if (pt_before_jer > 0) {
@@ -1065,6 +1299,7 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
     const std::vector<float>& jetMuonSubtrFactors,
     const std::vector<float>& jetChEmEF,
     const std::vector<float>& jetNeEmEF,
+    const std::vector<int>& jetGenJetIndices,
     const std::vector<float>& corrT1RawPt,
     const std::vector<float>& corrT1Eta,
     const std::vector<float>& corrT1Phi,
@@ -1076,7 +1311,8 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
     bool applyJER,
     const std::vector<TLorentzVector>& genJets,
     unsigned int run_number,
-    ULong64_t event_number
+    ULong64_t event_number,
+    const std::string& jerSysTag
 ) const {
     double met_px = raw_met_pt * std::cos(raw_met_phi);
     double met_py = raw_met_pt * std::sin(raw_met_phi);
@@ -1091,8 +1327,15 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
     // version of this function (and was also present in the old fused
     // ApplyJetCorrectionsWithMET/RecomputeMET path, now removed entirely -
     // this function is the sole MET computation).
+    //
+    // matchedGenPt is now resolved by the CALLER (see the two loops below)
+    // instead of being computed here via a DeltaR rematch against genJets -
+    // regular Jet_ jets and CorrT1METJet_ jets resolve it differently (see
+    // the loops), so this lambda just takes whatever gen pt (or -1.0 for
+    // "no match") the caller already decided on.
     auto accumulate = [&](double eta, double phi, double rawPtRaw, double area,
-                          double muonSubtrFactor, double chEmEF, double neEmEF) {
+                          double muonSubtrFactor, double chEmEF, double neEmEF,
+                          float matchedGenPt, float matchedGenEta, float matchedGenPhi) {
         double rawPtNoMu = rawPtRaw * (1.0 - muonSubtrFactor);
         if (rawPtNoMu <= 0.0) return;
 
@@ -1103,16 +1346,11 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
             corrPtNoMu = GetCorrectedJetPt(rawPtNoMu, eta, area, rho, run_number);
         }
         if (!isData && applyJER) {
-            TLorentzVector recoJet4v;
-            recoJet4v.SetPtEtaPhiM(rawPtNoMu, eta, phi, 0.0);
             // -1.0 sentinel handled inside SmearJER as "no gen match" (falls
-            // back to stochastic smearing) if MatchGenPt finds nothing within maxDR.
-            // NOTE (from the tutorial's own README to-do list): CorrT1METJet_
-            // has no genJetIdx branch, so this dR-based rematch is the same
-            // acknowledged-imperfect approach the official tutorial itself
-            // uses for those jets - not something specific to our code.
-            float matchedGenPt = MatchGenPt(recoJet4v, genJets, 0.2f);
-            corrPtNoMu = SmearJER(corrPtNoMu, matchedGenPt, eta, phi, rho, event_number, "nominal");
+            // back to stochastic smearing). matchedGenEta/Phi are unused by
+            // SmearJER when matchedGenPt < 0.
+            corrPtNoMu = SmearJER(corrPtNoMu, matchedGenPt, matchedGenEta, matchedGenPhi,
+                                   eta, phi, rho, event_number, jerSysTag);
         }
 
         // Type-1 selection cut (CMS JERC tutorial's JvmApplication-adjacent
@@ -1127,6 +1365,13 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
     // Regular Jet_ branch jets: jetsAsStored holds the NanoAOD-stored
     // (already centrally-corrected) pt, so undo rawFactor first to get the
     // true raw pt - same convention as ApplyJetCorrections.
+    //
+    // Gen matching (2026-08 fix): use Jet_genJetIdx (jetGenJetIndices, same
+    // index/convention as ApplyJetCorrections' genJetIndices) instead of a
+    // DeltaR rematch - these are the same physical jets ApplyJetCorrections
+    // already matched via Jet_genJetIdx for the physics-jet collection, so
+    // the MET path should agree with it rather than compute a second,
+    // possibly-different match independently.
     for (size_t i = 0; i < jetsAsStored.size(); ++i) {
         double rawFactor = (i < jetRawFactors.size()) ? jetRawFactors[i] : 0.0f;
         double area       = (i < jetAreas.size())       ? jetAreas[i]       : 0.5f;
@@ -1134,18 +1379,43 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
         double chEmEF     = (i < jetChEmEF.size())      ? jetChEmEF[i]      : 0.0f;
         double neEmEF     = (i < jetNeEmEF.size())      ? jetNeEmEF[i]      : 0.0f;
         double rawPtRaw   = jetsAsStored[i].Pt() * (1.0 - rawFactor);
-        accumulate(jetsAsStored[i].Eta(), jetsAsStored[i].Phi(), rawPtRaw, area, muonSubtr, chEmEF, neEmEF);
+
+        float matchedGenPt = -1.0f;
+        float matchedGenEta = 0.0f;
+        float matchedGenPhi = 0.0f;
+        if (!isData && applyJER && i < jetGenJetIndices.size() &&
+            jetGenJetIndices[i] >= 0 &&
+            static_cast<size_t>(jetGenJetIndices[i]) < genJets.size()) {
+            matchedGenPt  = genJets[jetGenJetIndices[i]].Pt();
+            matchedGenEta = genJets[jetGenJetIndices[i]].Eta();
+            matchedGenPhi = genJets[jetGenJetIndices[i]].Phi();
+        }
+        accumulate(jetsAsStored[i].Eta(), jetsAsStored[i].Phi(), rawPtRaw, area, muonSubtr, chEmEF, neEmEF,
+                   matchedGenPt, matchedGenEta, matchedGenPhi);
     }
 
     // Low-pT CorrT1METJet_ branch jets: rawPt is already raw (no rawFactor to
     // undo). No EM-fraction branches exist for these (too low-pT to have
     // them produced) - pass 0/0, same as the CMS JERC tutorial's
     // CollectJetMet.hpp ("EM fractions are not provided for CorrT1METJet;
-    // set to zero explicitly").
+    // set to zero explicitly"). No Jet_genJetIdx-equivalent branch exists
+    // for this collection either, so it keeps the DeltaR-based MatchGenPt()
+    // rematch - the same acknowledged-imperfect approach the tutorial
+    // itself uses for these jets.
     for (size_t i = 0; i < corrT1RawPt.size(); ++i) {
         double area      = (i < corrT1Area.size())               ? corrT1Area[i]               : 0.5f;
         double muonSubtr = (i < corrT1MuonSubtrFactor.size())    ? corrT1MuonSubtrFactor[i]    : 0.0f;
-        accumulate(corrT1Eta[i], corrT1Phi[i], corrT1RawPt[i], area, muonSubtr, 0.0, 0.0);
+
+        float matchedGenPt = -1.0f;
+        float matchedGenEta = 0.0f;
+        float matchedGenPhi = 0.0f;
+        if (!isData && applyJER) {
+            TLorentzVector recoJet4v;
+            recoJet4v.SetPtEtaPhiM(corrT1RawPt[i], corrT1Eta[i], corrT1Phi[i], 0.0);
+            matchedGenPt = MatchGenPt(recoJet4v, genJets, 0.2f, &matchedGenEta, &matchedGenPhi);
+        }
+        accumulate(corrT1Eta[i], corrT1Phi[i], corrT1RawPt[i], area, muonSubtr, 0.0, 0.0,
+                   matchedGenPt, matchedGenEta, matchedGenPhi);
     }
 
     double corrected_met_pt  = std::sqrt(met_px * met_px + met_py * met_py);

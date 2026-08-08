@@ -38,6 +38,17 @@
 #include "./NanoAODBranchReader.h"
 #include "./JetID.h"
 
+// Named cutflow-stage indices for the h_*[10]-style per-stage histogram
+// arrays below (h_Lep1pt, h_Num_PV, ...) - see interface/SelectionStage.h
+// for the full trace of what each stage actually corresponds to in Loop().
+#include "./SelectionStage.h"
+
+// Debug event tracer (run:lumi:event, config-driven, off by default) and
+// correction-fallback counter (records when a correctionlib evaluate()
+// call in Loop()'s catch blocks fell back to a default value instead of a
+// real correction) - see interface/DebugTools.h.
+#include "./DebugTools.h"
+
 
 class Analysis {
 public:
@@ -127,6 +138,19 @@ private:
     void CollectPUIDCandidates();
     bool IsHardScatterJet(int jet_idx) const;
 
+    // Step 1d: shared per-stage control-plot filler, replacing the
+    // repeated FillHisto(h_XXX[selectionIndex(stage)], ...) blocks previously
+    // duplicated at every selection stage in Loop(). Fills exactly the
+    // histogram set each stage filled before this change (see the call
+    // sites in Loop() and PHASE1.md Step 1d for the stage->set mapping) -
+    // this is a pure mechanical consolidation, not a change to what gets
+    // filled. includeJets/includeBJets select the optional Jet1/Jet2 and
+    // Num_bJets fills; Lep1/Lep2/MET/DiLepMass/Num_PV/Num_Jets are always
+    // filled. FillHisto() itself has no side effects beyond filling its
+    // own histogram, so the fill order inside this helper does not affect
+    // any bin content vs. the original per-stage ordering.
+    void FillControlPlots(SelectionStage stage, bool includeJets, bool includeBJets);
+
 
 
     // NanoAOD branch reading (the dynamic type maps, InitBranches, and the
@@ -136,6 +160,27 @@ private:
     // Analysis calls through branchReader_ everywhere it used to touch those
     // maps directly (e.g. branchReader_.floatVectors.at("Jet_pt").get()).
     NanoAODBranchReader branchReader_;
+
+    // Debug event tracer - configured in SetVariables() from DebugMode/
+    // DebugRun/DebugLumi/DebugEvent config keys (all optional, off by
+    // default). Checked once per event in Loop(); when it matches, prints
+    // selection/weight state at a few key checkpoints regardless of the
+    // matched event's actual selection outcome.
+    DebugEventFilter debugFilter_;
+    // Counts correctionlib evaluate() failures caught in Loop()'s existing
+    // catch blocks (jet raw-field reads, b-tag SF, PU-jet-ID SF) that fell
+    // back to a default value instead of a real correction. Printed once at
+    // the end of Loop().
+    CorrectionFallbackCounter fallbackCounter_;
+
+    // Step 1e: shared logger, replacing std::cout/std::cerr call sites one
+    // function at a time (see PHASE1.md Step 1e - this is a multi-step
+    // migration, not a single sweep). Defaults to LogLevel::Info, which
+    // means every call site migrated so far still prints unconditionally
+    // (Info and Error are both <= the default level) - this only changes
+    // where a print goes through and how it's prefixed, not whether it
+    // prints. Nothing lowers the level below Info yet.
+    Logger logger_;
 
     // ------------------------------------------------------------------
     // NanoAODv15 switched the Jet collection to AK4 Puppi jets and removed
@@ -283,7 +328,39 @@ private:
     TTreeReaderArray<Float_t>* gen_jets_phi;
     TTreeReaderArray<Float_t>* gen_jets_M;
     //std::vector<TLorentzVector> genJets;
+    // 2026-08: dojer was read from config ("DoJER") but never actually
+    // gated the JES/JER application booleans passed into
+    // ApplyJetCorrections()/ApplyType1METWithCorrT1() - those two call
+    // sites hardcoded `true, true` regardless of this value (see
+    // MakeJetCollection() in Analysis.cpp). dojes is the analogous flag for
+    // JES, newly added - there was previously no config key for it at all,
+    // JES was unconditionally on. Both now actually gate their respective
+    // corrections - see SetVariables() and MakeJetCollection().
+    bool dojes;
     bool dojer;
+    // 2026-08: JER systematic wiring. SSBCorrections::SmearJER() already
+    // supported a jer_tag ("nominal"/"up"/"down") parameter that combines
+    // jer_sf_ with the separately-loaded jer_sfunc_ (JER SF uncertainty) as
+    // sf*(1+-unc) - see SmearJER() in SSBCorrections.cpp - but every call
+    // site hardcoded the literal "nominal", so up/down was never reachable.
+    // JERSys is the new config key selecting it; read in SetVariables(),
+    // forwarded through ApplyJetCorrections()/ApplyType1METWithCorrT1()'s
+    // new jerSysTag parameter in MakeJetCollection(). One tag per job,
+    // matching every other systematic in this codebase (TrigSFSys,
+    // PileupSys, etc.) - not a same-job nominal+up+down triple output.
+    TString JERSys;
+    // JES full-uncertainty-set systematic - NOT YET WIRED (2026-08). Design
+    // intent (per your instruction: full set of individually-correlated
+    // sources, not just a single combined "Total" uncertainty; reduced set
+    // deferred): JESSysSource (e.g. "Absolute", "BBEC1_2018", "FlavorQCD",
+    // "Total", or "nominal") + JESSysDir ("up"/"down") will select and load
+    // one named JES uncertainty-source correction from jet_jerc.json.gz and
+    // apply it multiplicatively to GetCorrectedJetPt()'s output, mirroring
+    // how JERSys works above. Blocked on confirming the actual correction
+    // names in your jet_jerc.json.gz (CAT's per-source naming convention
+    // isn't guaranteed to match a simple substitution into jec_name the way
+    // jec_l1_'s L1FastJet name is derived) - not added as member variables
+    // yet to avoid declaring something that doesn't match what's real.
 
     // MET //
     TTreeReaderValue<Float_t>* met_pt;

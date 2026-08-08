@@ -12,9 +12,9 @@ Analysis::Analysis(TChain *inputChain, std::string inputName, std::string seDirN
     }
     FileName_ = SetInputFileName(inputName);
     isData = TString(FileName_).Contains("Data");
-    std::cout << "FileName_ : " << FileName_ << std::endl;
+    logger_.Info() << "FileName_ : " << FileName_ << std::endl;
     // Load Configuration files //
-    std::cout << "configFile : " << configFile << std::endl;
+    logger_.Info() << "configFile : " << configFile << std::endl;
     std::string confDir = "./configs/";
     std::string confpath = "";
     confpath = confDir+configFile;
@@ -27,16 +27,16 @@ Analysis::Analysis(TChain *inputChain, std::string inputName, std::string seDirN
     // Initialize branches based on branch list file (NanoAODBranchReader owns
     // the actual maps/type-detection now - see interface/NanoAODBranchReader.h)
     branchReader_.InitBranches(branchListFile, isData);
-    cutflowName[0] = "Step_0";
-    cutflowName[1] = "Step_1" ;
-    cutflowName[2] = "Step_2";
-    cutflowName[3] = "Step_3";
-    cutflowName[4] = "Step_4";
-    cutflowName[5] = "bTagged Jet >= 1";
-    cutflowName[6] = "bTagged Jet >= 2";
-    cutflowName[7] = "bTagged Jet == 2";
-    cutflowName[8] = "Top-Recon.";
-    cutflowName[9] = "Top-Pt-Rewight";
+    cutflowName[selectionIndex(SelectionStage::AfterTriggerAndPV)] = "Step_0";
+    cutflowName[selectionIndex(SelectionStage::AfterDileptonCuts)] = "Step_1" ;
+    cutflowName[selectionIndex(SelectionStage::AfterZVeto)] = "Step_2";
+    cutflowName[selectionIndex(SelectionStage::AfterJetMultiplicity)] = "Step_3";
+    cutflowName[selectionIndex(SelectionStage::AfterMETCut)] = "Step_4";
+    cutflowName[selectionIndex(SelectionStage::AfterBTagMultiplicity)] = "bTagged Jet >= 1";
+    cutflowName[selectionIndex(SelectionStage::Reserved6)] = "bTagged Jet >= 2";
+    cutflowName[selectionIndex(SelectionStage::Reserved7)] = "bTagged Jet == 2";
+    cutflowName[selectionIndex(SelectionStage::AfterTopReconstruction)] = "Top-Recon.";
+    cutflowName[selectionIndex(SelectionStage::Reserved9)] = "Top-Pt-Rewight";
  
     pi = TMath::Pi();
     Start();
@@ -47,25 +47,25 @@ Analysis::~Analysis() {
 
     if (fout) {
         fout->Write();
-        std::cout << "[Info. output file Name] : " <<  fout->GetName() << std::endl;
+        logger_.Info() << "output file Name : " <<  fout->GetName() << std::endl;
         fout->Close(); // Close the file before deleting
         delete fout;
         fout = nullptr;
-        std::cout << "fout successfully deleted." << std::endl;
+        logger_.Info() << "fout successfully deleted." << std::endl;
     }
 
     // Safely delete the TextReader object
     if (SSBConfReader) {
         delete SSBConfReader;
         SSBConfReader = nullptr;
-        std::cout << "SSBConfReader successfully deleted." << std::endl;
+        logger_.Info() << "SSBConfReader successfully deleted." << std::endl;
     }
 
     // Safely delete the TextReader object
     if (SSBCorr) {
         delete SSBCorr;
         SSBCorr = nullptr;
-        std::cout << "SSBCorr successfully deleted." << std::endl;
+        logger_.Info() << "SSBCorr successfully deleted." << std::endl;
     }
 /*    else {
     std::cout << "Error !! SSBConfReader " << std::endl;
@@ -73,10 +73,10 @@ Analysis::~Analysis() {
     if (SSBCPVCal) {
         delete SSBCPVCal;
         SSBCPVCal = nullptr;
-        std::cout << "SSBCPVCal successfully deleted." << std::endl;
+        logger_.Info() << "SSBCPVCal successfully deleted." << std::endl;
     }
     // Add other cleanup as needed for dynamically allocated objects
-    std::cout << "Analysis destructor completed." << std::endl;
+    logger_.Info() << "Analysis destructor completed." << std::endl;
 }
 
 // NanoAOD branch reading (InitBranches + the type maps + version-agnostic
@@ -108,7 +108,7 @@ bool Analysis::PassConfiguredJetId(int idx) const {
 
 
 void Analysis::SetVariables() {
-    std::cout << "Set varibles " << std::endl;
+    logger_.Info() << "Set varibles " << std::endl;
 
     Lumi = SSBConfReader->GetNumber( "Luminosity" );
     RunPeriod = SSBConfReader->GetText( "RunRange" );
@@ -117,7 +117,28 @@ void Analysis::SetVariables() {
 
     std::string blindStr = SSBConfReader->GetText( "isBlind" );
     isBlind = (blindStr == "True" || blindStr == "true");
-    std::cout << "[Blind] isData=" << isData << " isBlind=" << isBlind << std::endl;
+    logger_.Info() << "[Blind] isData=" << isData << " isBlind=" << isBlind << std::endl;
+
+    // Debug event tracer (interface/DebugTools.h) - optional, off by
+    // default. Config keys: DebugMode (bool), DebugRun/DebugLumi/DebugEvent
+    // (0 = match any value for that field). Guarded with Check() first since
+    // these keys aren't present in any existing config file - without the
+    // guard, GetBool/GetNumberUint's default PrintError=true would print a
+    // "Cannot find" line (like isBlind above does on configs missing that
+    // key) on every single job that doesn't use this feature.
+    {
+        bool debugMode = SSBConfReader->Check("DebugMode") && SSBConfReader->GetBool("DebugMode");
+        unsigned int debugRun = SSBConfReader->Check("DebugRun") ? SSBConfReader->GetNumberUint("DebugRun") : 0;
+        unsigned int debugLumi = SSBConfReader->Check("DebugLumi") ? SSBConfReader->GetNumberUint("DebugLumi") : 0;
+        unsigned long long debugEvent = SSBConfReader->Check("DebugEvent")
+            ? static_cast<unsigned long long>(SSBConfReader->GetNumberDouble("DebugEvent")) : 0;
+        debugFilter_.Configure(debugMode, debugRun, debugLumi, debugEvent);
+        if (debugMode) {
+            logger_.Info() << "[DebugEventFilter] enabled - tracing run=" << debugRun
+                      << " lumi=" << debugLumi << " event=" << debugEvent
+                      << " (0 = match any value for that field)" << std::endl;
+        }
+    }
 
 
     /// Set Trigger List ///
@@ -128,7 +149,7 @@ void Analysis::SetVariables() {
 
     for(int i =0; i < num_dleptrig; ++i)
     {
-        std::cout << SSBConfReader->GetText("dileptrigger",i+1) << std::endl;
+        logger_.Info() << SSBConfReader->GetText("dileptrigger",i+1) << std::endl;
         std::string tmptrg = SSBConfReader->GetText("dileptrigger",i+1);
         DLtrigName.push_back( removeSubstring( tmptrg, "_v") );
         trigName.push_back( removeSubstring( tmptrg, "_v")  );
@@ -136,14 +157,14 @@ void Analysis::SetVariables() {
 
     for(int i =0; i < num_sleptrig; ++i)
     {
-        std::cout << SSBConfReader->GetText("singleleptrigger",i+1) << std::endl;
+        logger_.Info() << SSBConfReader->GetText("singleleptrigger",i+1) << std::endl;
         std::string tmptrg = SSBConfReader->GetText("singleleptrigger",i+1);
         SLtrigName.push_back( removeSubstring(tmptrg,"_v") );
         trigName.push_back( removeSubstring(tmptrg,"_v") );
     }
 
     for (int i = 0; i < trigName.size(); ++i){
-        std::cout << "test trigName[i] " << trigName[i] << std::endl;
+        logger_.Info() << "test trigName[i] " << trigName[i] << std::endl;
         triggerList[trigName[i]] =DeepCopy<bool>( branchReader_.boolSingles[trigName[i]]);
     }
 
@@ -153,7 +174,7 @@ void Analysis::SetVariables() {
        std::string tmpnoisefl = SSBConfReader->GetText("METFilters",i+1);
        //std::cout << "METFilters: " <<  tmpnoisefl << std::endl;
        //std::cout << branchReader_.boolSingles[tmpnoisefl] << std::endl;
-       if(branchReader_.boolSingles[tmpnoisefl] ==NULL) {std::cout << "Error!!!" << tmpnoisefl << std::endl;}
+       if(branchReader_.boolSingles[tmpnoisefl] ==NULL) {logger_.Error() << "Error!!!" << tmpnoisefl << std::endl;}
        noiseFilters[tmpnoisefl] = DeepCopy<bool>( branchReader_.boolSingles[tmpnoisefl]);
        //std::cout << "test "<< std::endl;
     }
@@ -190,8 +211,48 @@ void Analysis::SetVariables() {
     veto_eleciso_type = SSBConfReader->GetText( "VetoElecIso" );
     veto_elecid       = SSBConfReader->GetText( "VetoElecId"  );
 
-    dojer = SSBConfReader->GetBool("DoJER");
-    
+    // DoJES/DoJER: whether to apply JES (jet energy corrections) / JER (jet
+    // energy resolution smearing) at all, independently of each other.
+    // TextReader::GetBool() prints "Cannot find" and silently returns
+    // `false` for a missing key (see TextReader/TextReader.cpp) - fine for
+    // DoJER, which is already present in every shipped config. DoJES is a
+    // brand new key (there was no way to turn JES off before this change,
+    // it was unconditionally applied), so an old config that hasn't been
+    // updated yet would silently get JES=off under GetBool()'s default -
+    // a real, silent physics change for anyone who doesn't add the key.
+    // Guard with Check() first and default to `true` (JES's previous
+    // always-on behavior) when the key is genuinely absent, so this is
+    // opt-out for old configs, not a footgun.
+    dojes = SSBConfReader->Check("DoJES") ? SSBConfReader->GetBool("DoJES") : true;
+    if (!SSBConfReader->Check("DoJES")) {
+        logger_.Warning() << "DoJES not set in config - defaulting to true (JES applied), "
+                              "matching this code's previous always-on behavior. "
+                              "Add DoJES : \"true\"/\"false\" explicitly to silence this." << std::endl;
+    }
+    dojer = SSBConfReader->Check("DoJER") ? SSBConfReader->GetBool("DoJER") : true;
+    if (!SSBConfReader->Check("DoJER")) {
+        logger_.Warning() << "DoJER not set in config - defaulting to true (JER applied), "
+                              "matching this code's previous always-on behavior. "
+                              "Add DoJER : \"true\"/\"false\" explicitly to silence this." << std::endl;
+    }
+    logger_.Info() << "DoJES: " << (dojes ? "true" : "false")
+                    << "  DoJER: " << (dojer ? "true" : "false") << std::endl;
+
+    // JERSys: "nominal"/"up"/"down", forwarded to SmearJER()'s jer_tag via
+    // ApplyJetCorrections()/ApplyType1METWithCorrT1() in MakeJetCollection().
+    // New key, not present in any shipped config yet - same Check()-then-
+    // default pattern as DoJES above, defaulting to "nominal" (this code's
+    // only previous behavior) rather than letting GetText() print "Cannot
+    // find" and return the "DUMMY" sentinel, which SmearJER() would then
+    // treat as an unrecognized tag - harmless (falls through to the same
+    // "not up, not down" nominal path) but noisy/confusing to debug.
+    JERSys = SSBConfReader->Check("JERSys") ? SSBConfReader->GetText("JERSys") : "nominal";
+    if (!SSBConfReader->Check("JERSys")) {
+        logger_.Warning() << "JERSys not set in config - defaulting to \"nominal\". "
+                              "Add JERSys : \"nominal\"/\"up\"/\"down\" explicitly to silence this." << std::endl;
+    }
+    logger_.Info() << "JERSys: " << JERSys << std::endl;
+
     PileUpSys    = SSBConfReader->GetText("PileupSys");
     L1PreFireSys = SSBConfReader->GetText("L1PreFireSys");
     TrigSFSys    = SSBConfReader->GetText("TrigSFSys");    
@@ -215,62 +276,62 @@ void Analysis::SetVariables() {
     // remains, with no correctionlib SF yet). Force PUID off rather than
     // silently rejecting every low-pT jet with a default puId of 0.
     if (apply_puid_ && !branchReader_.JetPuIdAvailable()) {
-        std::cerr << "[WARNING] ApplyPUID=True in config but Jet_puId branch is unavailable "
+        logger_.Warning() << "ApplyPUID=True in config but Jet_puId branch is unavailable "
                   << "in this input file - disabling PU-jet-ID for this job." << std::endl;
         apply_puid_ = false;
     }
 
     // Validate PUID settings
     if (puid_wp_ != "L" && puid_wp_ != "M" && puid_wp_ != "T") {
-        std::cerr << "[WARNING] Invalid PUID working point: " << puid_wp_ 
+        logger_.Warning() << "Invalid PUID working point: " << puid_wp_
                   << ". Using default 'L'." << std::endl;
         puid_wp_ = "L";
     }
-    
+
     if (puid_pt_threshold_ <= 0 || puid_pt_threshold_ > 200) {
-        std::cerr << "[WARNING] Invalid PUID pT threshold: " << puid_pt_threshold_ 
+        logger_.Warning() << "Invalid PUID pT threshold: " << puid_pt_threshold_
                   << ". Using default 50.0 GeV." << std::endl;
         puid_pt_threshold_ = 50.0;
     }
-    
+
     // Print PUID configuration
-    std::cout << "PUID Configuration:" << std::endl;
-    std::cout << "  Working Point: " << puid_wp_ << std::endl;
-    std::cout << "  Systematic: " << PUIDSFSys << std::endl;
-    std::cout << "  Apply PUID: " << (apply_puid_ ? "true" : "false") << std::endl;
-    std::cout << "  pT Threshold: " << puid_pt_threshold_ << " GeV" << std::endl;
+    logger_.Info() << "PUID Configuration:" << std::endl;
+    logger_.Info() << "  Working Point: " << puid_wp_ << std::endl;
+    logger_.Info() << "  Systematic: " << PUIDSFSys << std::endl;
+    logger_.Info() << "  Apply PUID: " << (apply_puid_ ? "true" : "false") << std::endl;
+    logger_.Info() << "  pT Threshold: " << puid_pt_threshold_ << " GeV" << std::endl;
 
     // Select MET Type //
     METtype = SSBConfReader->GetText("METtype");// Error Print is false in this version,
-    std::cout << "  MET type: " << METtype << std::endl;
+    logger_.Info() << "  MET type: " << METtype << std::endl;
     if (METtype == "DUMMY"){
 	    // NanoAODv15 default: PUPPI MET. Set METtype=PF in the config explicitly if you want PFMET.
 	    METtype = "Puppi";
-            std::cout << "[WARNING] METtype COULD NOT FIND CONFIGURATION!! DEFAULT IS PuppiMET!!  " << METtype << std::endl;
+            logger_.Warning() << "METtype COULD NOT FIND CONFIGURATION!! DEFAULT IS PuppiMET!!  " << METtype << std::endl;
     }
     ///
     //std::cout << "triggerList : " << triggerList.size()<< std::endl;
     //SetObjectVariable();
     applyMETXY = SSBConfReader->GetText("applyMETXY");
-    std::cout << "  apply MET XY correction: " << applyMETXY << std::endl;
+    logger_.Info() << "  apply MET XY correction: " << applyMETXY << std::endl;
     if (applyMETXY == "DUMMY") {
 	    applyMETXY == "False";
-            std::cout << "[WARNING] applyMETXY COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyMETXY << std::endl;
+            logger_.Warning() << "applyMETXY COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyMETXY << std::endl;
     }
 
     applyMETXY = SSBConfReader->GetText("applyMETXY");
     if (applyMETXY == "DUMMY") {
             applyMETXY == "False";
-            std::cout << "[WARNING] applyMETXY COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyMETXY << std::endl;
+            logger_.Warning() << "applyMETXY COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyMETXY << std::endl;
     }
-    std::cout << "  apply MET XY correction: " << applyMETXY << std::endl;
+    logger_.Info() << "  apply MET XY correction: " << applyMETXY << std::endl;
 
     applyRochester = SSBConfReader->GetText("applyRochester");
     if (applyRochester == "DUMMY") {
             applyRochester == "False";
-            std::cout << "[WARNING] applyRochester COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyRochester << std::endl;
+            logger_.Warning() << "applyRochester COULD NOT FIND CONFIGRUATION!! DEFALT IS False!!  " << applyRochester << std::endl;
     }
-    std::cout << "  apply Rochester correction: " << applyRochester << std::endl;
+    logger_.Info() << "  apply Rochester correction: " << applyRochester << std::endl;
 }
 
 void Analysis::SetObjectVariable() {
@@ -289,23 +350,23 @@ void Analysis::SetObjectVariable() {
     if      (TString(MuonId).Contains( "Loose"  ) )  { muons_Id = branchReader_.boolVectors.at("Muon_looseId").get(); }
     else if (TString(MuonId).Contains( "Medium"  ) ) { muons_Id = branchReader_.boolVectors.at("Muon_mediumId").get(); }
     else if (TString(MuonId).Contains( "Tight"  ) )  { muons_Id = branchReader_.boolVectors.at("Muon_tightId").get(); }
-    else { std::cout << "Muon ID Error" << std::endl; }
+    else { logger_.Error() << "Muon ID Error" << std::endl; }
 
     if (TString(MuonIsoType).Contains("PFIsodbeta03")) {
         if (branchReader_.floatVectors.at("Muon_pfRelIso03_all") == nullptr) {
-            std::cerr << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
+            logger_.Error() << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
             return;
         }
         muons_iso = branchReader_.floatVectors.at("Muon_pfRelIso03_all").get();
     
     } else if (TString(MuonIsoType).Contains("PFIsodbeta04")) {
         if (branchReader_.floatVectors.at("Muon_pfRelIso04_all") == nullptr) {
-            std::cerr << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
+            logger_.Error() << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
             return;
         }
         muons_iso = branchReader_.floatVectors.at("Muon_pfRelIso04_all").get();
     } else {
-            std::cerr << "Muon Iso type Error" << std::endl;
+            logger_.Error() << "Muon Iso type Error" << std::endl;
             return;
     }
 
@@ -320,9 +381,9 @@ void Analysis::SetObjectVariable() {
         elecs_iso = branchReader_.floatVectors.at("Electron_pfRelIso03_all").get();
     } else if (TString(ElecIsoType).Contains("PFIsoRho04")) {
         elecs_iso = branchReader_.floatVectors.at("Electron_pfRelIso03_all").get();
-        std::cerr << "No PFIsoRho04 in NanoAOD..." << std::endl;
+        logger_.Warning() << "No PFIsoRho04 in NanoAOD..." << std::endl;
     } else {
-        std::cerr << "Electron Iso type Error" << std::endl;
+        logger_.Error() << "Electron Iso type Error" << std::endl;
     }
 
     /// Electron iso type
@@ -368,7 +429,7 @@ void Analysis::SetObjectVariable() {
         elecs_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         eleid_scbcut = 1;
     } else {
-        std::cerr << "Electron ID Error" << std::endl;
+        logger_.Error() << "Electron ID Error" << std::endl;
     }
 
 
@@ -380,18 +441,18 @@ void Analysis::SetObjectVariable() {
     ////////////////////////
     if (TString(veto_muoniso_type).Contains("PFIsodbeta03")) {
         if (branchReader_.floatVectors.at("Muon_pfRelIso03_all") == nullptr) {
-            std::cerr << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
+            logger_.Error() << "Error: Muon_pfRelIso03_all branch not initialized!" << std::endl;
             return;
         }
         muonsveto_iso = branchReader_.floatVectors.at("Muon_pfRelIso03_all").get();
     } else if (TString(veto_muoniso_type).Contains("PFIsodbeta04")) {
         if (branchReader_.floatVectors.at("Muon_pfRelIso04_all") == nullptr) {
-            std::cerr << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
+            logger_.Error() << "Error: Muon_pfRelIso04_all branch not initialized!" << std::endl;
             return;
         }
         muonsveto_iso = branchReader_.floatVectors.at("Muon_pfRelIso04_all").get();
     } else {
-        std::cerr << "Muon Iso type Error" << std::endl;
+        logger_.Error() << "Muon Iso type Error" << std::endl;
         return;
     }
 
@@ -399,7 +460,7 @@ void Analysis::SetObjectVariable() {
     if (muonsveto_iso != nullptr) {
         //std::cout << "muonsveto_iso size: " << muonsveto_iso->GetSize() << std::endl;
     } else {
-        std::cerr << "Error: muonsveto_iso is null after assignment!" << std::endl;
+        logger_.Error() << "Error: muonsveto_iso is null after assignment!" << std::endl;
     }
 
 
@@ -407,10 +468,10 @@ void Analysis::SetObjectVariable() {
     if      (TString(veto_muonid).Contains( "Loose"  ) )  { muonsveto_Id = branchReader_.boolVectors.at("Muon_looseId").get(); }
     else if (TString(veto_muonid).Contains( "Medium"  ) ) { muonsveto_Id = branchReader_.boolVectors.at("Muon_mediumId").get();}
     else if (TString(veto_muonid).Contains( "Tight"  ) )  { muonsveto_Id = branchReader_.boolVectors.at("Muon_tightId").get(); }
-    else { std::cout << "Muon ID Error" << std::endl; }
+    else { logger_.Error() << "Muon ID Error" << std::endl; }
     
     if (muonsveto_Id == nullptr) {
-        std::cerr << "Error: muonsveto_Id is null after assignment!" << std::endl;
+        logger_.Error() << "Error: muonsveto_Id is null after assignment!" << std::endl;
     }
 
 
@@ -424,7 +485,7 @@ void Analysis::SetObjectVariable() {
         auto it = branchReader_.intVectors.find("Electron_cutBased");
         elecsveto_scbId = (it != branchReader_.intVectors.end()) ? it->second.get() : nullptr;
     }
-    if (!branchReader_.BranchIsAvailable("Electron_cutBased")) {std::cerr <<"Error: Electron_cutBased branch not found at all!" <<std::endl;}
+    if (!branchReader_.BranchIsAvailable("Electron_cutBased")) {logger_.Error() <<"Error: Electron_cutBased branch not found at all!" <<std::endl;}
 
     if (TString(veto_elecid).Contains("SCBLoose")) {
         //elecIdVariant = branchReader_.intVectors.at("Electron_cutBased").get();
@@ -448,7 +509,7 @@ void Analysis::SetObjectVariable() {
         elecsveto_mvaId = branchReader_.boolVectors.at("Electron_mvaFall17V2Iso_WPL").get();
         elevetoid_scbcut = 1;
     } else {
-        std::cerr << "Electron ID in veto selection Error " << veto_elecid << std::endl;
+        logger_.Error() << "Electron ID in veto selection Error " << veto_elecid << std::endl;
     }
 
     if (TString(veto_eleciso_type).Contains("PFIsoRho03")) {
@@ -458,19 +519,19 @@ void Analysis::SetObjectVariable() {
                 elecsveto_iso = ptr;
                 //std::cout << "in sele.... elecsveto_iso .. " << std::endl;
             } else {
-                std::cerr << "Error: 'Electron_pfRelIso03_all' is a null unique_ptr." << std::endl;
+                logger_.Error() << "Error: 'Electron_pfRelIso03_all' is a null unique_ptr." << std::endl;
             }
         } else {
-            std::cerr << "Error: 'Electron_pfRelIso03_all' not found in branchReader_.floatVectors." << std::endl;
+            logger_.Error() << "Error: 'Electron_pfRelIso03_all' not found in branchReader_.floatVectors." << std::endl;
         }
     } else if (TString(veto_eleciso_type).Contains("PFIsoRho04")) {
-        std::cerr << "No PFIsoRho04 in NanoAOD..." << std::endl;
+        logger_.Warning() << "No PFIsoRho04 in NanoAOD..." << std::endl;
     } else {
-        std::cerr << "Electron Iso type Error" << std::endl;
+        logger_.Error() << "Electron Iso type Error" << std::endl;
     }
 
     if (elecsveto_iso == nullptr) {
-        std::cerr << "Error: elecsveto_iso is null after assignment!" << std::endl;
+        logger_.Error() << "Error: elecsveto_iso is null after assignment!" << std::endl;
     }
 
 
@@ -512,7 +573,7 @@ void Analysis::SetObjectVariable() {
     // implementation (see PassConfiguredJetId). "PFLoose"/"PFLooseLepVeto"
     // were valid bitmask values pre-v15 but have no Puppi-era formula.
     if (JetId != "PFTight" && JetId != "PFTightLepVeto") {
-        std::cout << "[WARNING] Jet_ID='" << JetId << "' is not supported for NanoAODv15 Puppi jets. "
+        logger_.Warning() << "Jet_ID='" << JetId << "' is not supported for NanoAODv15 Puppi jets. "
                   << "Use PFTight or PFTightLepVeto in the config." << std::endl;
     }
 
@@ -540,7 +601,7 @@ void Analysis::SetObjectVariable() {
         jets_btag = branchReader_.floatVectors.at("Jet_btagCISV").get(); // Modify with appropriate variable name if needed
     }
     else {
-        std::cout << "Error: Unknown b-tagging algorithm in " << JetbTag << std::endl;
+        logger_.Error() << "Error: Unknown b-tagging algorithm in " << JetbTag << std::endl;
         jets_btag = nullptr;
         bdisccut = -1.0;
         return;
@@ -550,7 +611,7 @@ void Analysis::SetObjectVariable() {
     // If JetbTag still points at one of them the .get() above silently returns
     // nullptr; catch that here instead of segfaulting later at jets_btag->At(...).
     if (jets_btag == nullptr) {
-        std::cerr << "[ERROR] jets_btag is null: the branch for Jet_btag='" << JetbTag
+        logger_.Error() << "jets_btag is null: the branch for Jet_btag='" << JetbTag
                   << "' was not found in this input file. NanoAODv15 dropped the DeepCSV "
                   << "taggers - set Jet_btag to a deepJet (or PNet/UParT) working point in "
                   << "your config." << std::endl;
@@ -565,7 +626,7 @@ void Analysis::SetObjectVariable() {
     // it did once before (see NOTES.md).
     btag_algo_ = ParseBTagAlgo(JetbTag.Data());  // JetbTag is a TString - ParseBTagAlgo takes std::string
     if (btag_algo_ == BTagAlgo::Unknown) {
-        std::cerr << "Unknown b-tagging algorithm in JetbTag: " << JetbTag << std::endl;
+        logger_.Warning() << "Unknown b-tagging algorithm in JetbTag: " << JetbTag << std::endl;
     }
     
     // Parse working point from JetbTag
@@ -577,7 +638,7 @@ void Analysis::SetObjectVariable() {
     } else if (TString(JetbTag).Contains("T")) {
         btag_wp_ = "T";
     } else {
-        std::cerr << "Unknown working point in JetbTag: " << JetbTag << std::endl;
+        logger_.Warning() << "Unknown working point in JetbTag: " << JetbTag << std::endl;
     }
     
     // Debug output (optional)
@@ -601,7 +662,7 @@ void Analysis::SetObjectVariable() {
         // but unusable for a real several-million-event production run).
         static bool printedBTagDiscCutInfo = false;
         if (!printedBTagDiscCutInfo) {
-            std::cout << "[INFO] Using BTagDiscCut from config: " << bdisccut << std::endl;
+            logger_.Info() << "Using BTagDiscCut from config: " << bdisccut << std::endl;
             printedBTagDiscCutInfo = true;
         }
     } else if (btag_algo_ == BTagAlgo::UParTAK4) {
@@ -616,13 +677,13 @@ void Analysis::SetObjectVariable() {
         if (lookedUpCut > 0.0) {
             bdisccut = lookedUpCut;
             if (!printedBTagWPCutInfo) {
-                std::cout << "[INFO] BTagDiscCut not set in config - looked up " << bdisccut
+                logger_.Info() << "BTagDiscCut not set in config - looked up " << bdisccut
                           << " from btagging.json.gz's UParTAK4_wp_values for WP='" << btag_wp_
                           << "'." << std::endl;
                 printedBTagWPCutInfo = true;
             }
         } else {
-            std::cerr << "[ERROR] Jet_btag='" << JetbTag << "' (UParT) has no hardcoded working-point "
+            logger_.Error() << "Jet_btag='" << JetbTag << "' (UParT) has no hardcoded working-point "
                       << "cut value, 'BTagDiscCut' was not set in the config, AND the "
                       << "UParTAK4_wp_values lookup didn't return a usable cut (see any "
                       << "[WARNING] above from GetBtagWPCut/InitBtagSFCorrection for why). Add e.g. "
@@ -639,19 +700,19 @@ void Analysis::SetObjectVariable() {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.2027;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.6001;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.8819;
-            else std::cout << "Unknown deepCSV working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepCSV working point!" << std::endl;
         }
         else if (TString(JetbTag).Contains("deepJet")) {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.0508;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.2598;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.6502;
-            else std::cout << "Unknown deepJet working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepJet working point!" << std::endl;
         }
         else if (TString(JetbTag).Contains("pfCSVV2")) {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.5426;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.8484;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.9535;
-            else std::cout << "Unknown pfCSVV2 working point!" << std::endl;
+            else logger_.Warning() << "Unknown pfCSVV2 working point!" << std::endl;
         }
     }
     else if (TString(RunPeriod).Contains("2016PostVFP")) {
@@ -659,13 +720,13 @@ void Analysis::SetObjectVariable() {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.1918;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.5847;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.8767;
-            else std::cout << "Unknown deepCSV working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepCSV working point!" << std::endl;
         }
         else if (TString(JetbTag).Contains("deepJet")) {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.0480;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.2489;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.6377;
-            else std::cout << "Unknown deepJet working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepJet working point!" << std::endl;
         }
     }
     else if (TString(RunPeriod).Contains("2017")) {
@@ -673,13 +734,13 @@ void Analysis::SetObjectVariable() {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.1355;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.4506;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.7738;
-            else std::cout << "Unknown deepCSV working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepCSV working point!" << std::endl;
         }
         else if (TString(JetbTag).Contains("deepJet")) {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.0532;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.3040;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.7476;
-            else std::cout << "Unknown deepJet working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepJet working point!" << std::endl;
         }
     }
     else if (TString(RunPeriod).Contains("2018")) {
@@ -687,17 +748,17 @@ void Analysis::SetObjectVariable() {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.1208;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.4168;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.7665;
-            else std::cout << "Unknown deepCSV working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepCSV working point!" << std::endl;
         }
         else if (TString(JetbTag).Contains("deepJet")) {
             if (TString(JetbTag).Contains("L")) bdisccut = 0.0490;
             else if (TString(JetbTag).Contains("M")) bdisccut = 0.2783;
             else if (TString(JetbTag).Contains("T")) bdisccut = 0.7100;
-            else std::cout << "Unknown deepJet working point!" << std::endl;
+            else logger_.Warning() << "Unknown deepJet working point!" << std::endl;
         }
     }
     else {
-        std::cout << "Error: Unsupported run period: " << RunPeriod << std::endl;
+        logger_.Error() << "Error: Unsupported run period: " << RunPeriod << std::endl;
         jets_btag = nullptr;
         bdisccut = -1.0;
     }
@@ -715,7 +776,7 @@ void Analysis::SetObjectVariable() {
         met_phi  = branchReader_.floatSingles.at("PuppiMET_phi").get();}
     else {
         // Unrecognized/unset METtype: default to PuppiMET (NanoAODv15 default).
-        std::cerr << "[WARNING] METtype='" << METtype << "' not recognized - defaulting to PuppiMET." << std::endl;
+        logger_.Warning() << "METtype='" << METtype << "' not recognized - defaulting to PuppiMET." << std::endl;
         met_pt  = branchReader_.floatSingles.at("PuppiMET_pt").get();
         met_phi = branchReader_.floatSingles.at("PuppiMET_phi").get();
     }
@@ -729,10 +790,43 @@ void Analysis::SetObjectVariable() {
 
 
 
+// Step 1d: shared per-stage control-plot filler. See the declaration
+// comment in interface/Analysis.h for what this replaces and why the
+// fill order inside here is safe to differ from the original per-stage
+// order (FillHisto() has no cross-histogram side effects).
+void Analysis::FillControlPlots(SelectionStage stage, bool includeJets, bool includeBJets) {
+    const std::size_t i = selectionIndex(stage);
+
+    FillHisto( h_DiLepMass[i], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+    FillHisto( h_Num_PV[i],    num_pv,                evt_weight_ );
+    FillHisto( h_Lep1pt[i] ,   (Lep1).Pt()  , evt_weight_ );
+    FillHisto( h_Lep1eta[i],   (Lep1).Eta() , evt_weight_ );
+    FillHisto( h_Lep1phi[i],   (Lep1).Phi() , evt_weight_ );
+    FillHisto( h_Lep2pt[i] ,   (Lep2).Pt()  , evt_weight_ );
+    FillHisto( h_Lep2eta[i],   (Lep2).Eta() , evt_weight_ );
+    FillHisto( h_Lep2phi[i],   (Lep2).Phi() , evt_weight_ );
+    FillHisto( h_METpt[i]  ,   Met.Pt()  , evt_weight_ );
+    FillHisto( h_METphi[i] ,   Met.Phi() , evt_weight_ );
+    FillHisto( h_Num_Jets[i] , v_jet_idx.size(), evt_weight_ );
+
+    if (includeJets) {
+        FillHisto( h_Jet1pt[i] ,   (Jet1).Pt()  , evt_weight_ );
+        FillHisto( h_Jet1eta[i],   (Jet1).Eta() , evt_weight_ );
+        FillHisto( h_Jet1phi[i],   (Jet1).Phi() , evt_weight_ );
+        FillHisto( h_Jet2pt[i] ,   (Jet2).Pt()  , evt_weight_ );
+        FillHisto( h_Jet2eta[i],   (Jet2).Eta() , evt_weight_ );
+        FillHisto( h_Jet2phi[i],   (Jet2).Phi() , evt_weight_ );
+    }
+
+    if (includeBJets) {
+        FillHisto( h_Num_bJets[i], v_bjet_idx.size(), evt_weight_ );
+    }
+}
+
 // Event loop function
 void Analysis::Loop() {
     if (!chain) {
-        std::cerr << "Error: TChain is null!" << std::endl;
+        logger_.Error() << "Error: TChain is null!" << std::endl;
         return;
     }
 
@@ -747,9 +841,36 @@ void Analysis::Loop() {
 	current_entry_ = ientry;
 
         if (!fReader.Next()) { // Move to the next entry
-            std::cerr << "Error: Failed to read entry " << ientry << std::endl;
+            logger_.Error() << "Error: Failed to read entry " << ientry << std::endl;
             break;
         }
+
+        // Debug event tracer: cheap to read unconditionally (run/event/
+        // luminosityBlock are always bound - see branch_list*.txt), only
+        // prints anything when debugFilter_ is enabled AND this exact event
+        // matches. Intentionally NOT routed through Logger's level gate -
+        // tracing one named event is an explicit ask, not a verbosity
+        // setting, so it should print regardless of the configured log
+        // level.
+        unsigned int       traceRun  = **branchReader_.uintSingles.at("run");
+        unsigned int       traceLumi = **branchReader_.uintSingles.at("luminosityBlock");
+        unsigned long long traceEvt  = **branchReader_.ulongSingles.at("event");
+        bool isTracedEvent = debugFilter_.Matches(traceRun, traceLumi, traceEvt);
+        if (isTracedEvent) {
+            std::cout << "[TRACE " << traceRun << ":" << traceLumi << ":" << traceEvt
+                      << "] entry=" << ientry << " isData=" << isData << std::endl;
+        }
+        // Prints "failed: <cutName>" for the traced event right before a
+        // `continue` fires, so a traced event that drops out of selection
+        // says exactly which cut did it, instead of just silently
+        // disappearing from the trace output.
+        auto traceCutFail = [&](const char* cutName) {
+            if (isTracedEvent) {
+                std::cout << "[TRACE " << traceRun << ":" << traceLumi << ":" << traceEvt
+                          << "] failed: " << cutName << std::endl;
+            }
+        };
+
         evt_weight_ = 1.;
         MCSFApply();
 
@@ -763,13 +884,26 @@ void Analysis::Loop() {
         LeptonOrder();
         JetSelector();
 	if (isjetveto_event_) {
-            continue; // Skip entire event having jetveto map jet 
+            if (isTracedEvent) {
+                std::cout << "[TRACE " << traceRun << ":" << traceLumi << ":" << traceEvt
+                          << "] skipped: isjetveto_event_" << std::endl;
+            }
+            continue; // Skip entire event having jetveto map jet
         }
         PUIDSFApply();  // Apply PUID event weight using collected information
- 
-        JetOrder(); 
-        bJetSelector(); 
+
+        JetOrder();
+        bJetSelector();
         //METDefiner();
+
+        if (isTracedEvent) {
+            std::cout << "[TRACE " << traceRun << ":" << traceLumi << ":" << traceEvt
+                      << "] after JetSelector/PUIDSFApply/bJetSelector: "
+                      << "nLepton=" << v_lepton_idx.size()
+                      << " nJet=" << v_jet_idx.size()
+                      << " nBJet=" << v_bjet_idx.size()
+                      << " evt_weight=" << evt_weight_ << std::endl;
+        }
 
         //if (i > 100) break; //%lld supports Long64_t
         if (ientry % 10000 == 0) {
@@ -778,24 +912,25 @@ void Analysis::Loop() {
 
 
         // Noise (MET) Filter //
-        if ( METFilterAPP() == false ) {continue;}
+        if ( METFilterAPP() == false ) {traceCutFail("METFilterAPP"); continue;}
         // Trigger Requirement //
-        if ( Trigger() == false ) {continue;}
-  
+        if ( Trigger() == false ) {traceCutFail("Trigger"); continue;}
+
         // Good Primary Vertex Selection //
         // PV_npvsGood is UChar_t in NanoAODv15 (was Int_t in v9) - read it
         // through the version-agnostic single-value accessor.
         if (branchReader_.GetIntSingleValue("PV_npvsGood") < 1) {
+            traceCutFail("PV_npvsGood>=1");
             continue;
         }
 
-        FillHisto( h_Num_PV[0]    , branchReader_.GetIntSingleValue("PV_npvsGood") , evt_weight_ );
-        if ( NumIsoLeptons(2) == false ) {continue;}
+        FillHisto( h_Num_PV[selectionIndex(SelectionStage::AfterTriggerAndPV)]    , branchReader_.GetIntSingleValue("PV_npvsGood") , evt_weight_ );
+        if ( NumIsoLeptons(2) == false ) {traceCutFail("NumIsoLeptons(2)"); continue;}
 
-        if (ThirdLeptonVeto() == false ) {continue;}
+        if (ThirdLeptonVeto() == false ) {traceCutFail("ThirdLeptonVeto"); continue;}
         //std::cout << "after ThirdLeptons : " << std::endl;
-        if (LeptonsPtAddtional() == false ) {continue;}
-        if (DiLeptonMassCut() == false) {continue;}
+        if (LeptonsPtAddtional() == false ) {traceCutFail("LeptonsPtAddtional"); continue;}
+        if (DiLeptonMassCut() == false) {traceCutFail("DiLeptonMassCut"); continue;}
 
         LeptonSFApply();
         TriggerSFApply();
@@ -803,127 +938,43 @@ void Analysis::Loop() {
         /// Step 1 ///
         //std::cout << "? evet weight " << evt_weight_ << std::endl;
         num_pv = static_cast<int>(branchReader_.GetIntSingleValue("PV_npvsGood"));
-        FillHisto( h_DiLepMass[1], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[1],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[1] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[1],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[1],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[1] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[1],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[1],    (Lep2).Phi() , evt_weight_ );
-        FillHisto( h_METpt[1]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[1]  ,   Met.Phi()  , evt_weight_ );
-        FillHisto( h_Num_Jets[1]  , v_jet_idx.size(), evt_weight_ );
-        //FillHisto( h_Num_bJets[1], nbtagged, evt_weight_ );
+        // Stage 1: no jets, no b-jets (h_Num_bJets was already commented
+        // out here before this consolidation - left out on purpose).
+        FillControlPlots(SelectionStage::AfterDileptonCuts, /*includeJets=*/false, /*includeBJets=*/false);
 
-        if (ZVetoCut() == false) {continue;}
+        if (ZVetoCut() == false) {traceCutFail("ZVetoCut"); continue;}
 
-        FillHisto( h_DiLepMass[2], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[2],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[2] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[2],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[2],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[2] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[2],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[2],    (Lep2).Phi() , evt_weight_ );
-        FillHisto( h_METpt[2]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[2]  ,   Met.Phi()  , evt_weight_ );
-        FillHisto( h_Num_Jets[2]  , v_jet_idx.size(), evt_weight_ );      
+        FillControlPlots(SelectionStage::AfterZVeto, /*includeJets=*/false, /*includeBJets=*/false);
 
-        if (NumJetCut(v_jet_idx) == false) {continue;}
-
-        FillHisto( h_DiLepMass[3], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[3],     num_pv, evt_weight_ );
-
-        FillHisto( h_Lep1pt[3] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[3],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[3],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[3] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[3],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[3],    (Lep2).Phi() , evt_weight_ );
+        if (NumJetCut(v_jet_idx) == false) {traceCutFail("NumJetCut"); continue;}
 
         //if ((Jet2).Pt() < 30.) printf("jet2pt %lf eta %lf \n",Jet2.Pt(), Jet2.Eta());//std::cout << "Wrong! " << Jet2.Pt() << std::endl;
-        FillHisto( h_Jet1pt[3] ,    (Jet1).Pt()  , evt_weight_ );
-        FillHisto( h_Jet1eta[3],    (Jet1).Eta() , evt_weight_ );
-        FillHisto( h_Jet1phi[3],    (Jet1).Phi() , evt_weight_ );
-        FillHisto( h_Jet2pt[3] ,    (Jet2).Pt()  , evt_weight_ );
-        FillHisto( h_Jet2eta[3],    (Jet2).Eta() , evt_weight_ );
-        FillHisto( h_Jet2phi[3],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[3]  , v_jet_idx.size(), evt_weight_ );      
+        FillControlPlots(SelectionStage::AfterJetMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
 
-        FillHisto( h_METpt[3]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[3]  ,   Met.Phi()  , evt_weight_ );
+        if (METCut(Met) == false) {traceCutFail("METCut"); continue;}
 
-        if (METCut(Met) == false) {continue;}
-
-        FillHisto( h_DiLepMass[4], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[4],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[4] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[4],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[4],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[4] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[4],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[4],    (Lep2).Phi() , evt_weight_ );
-
-        FillHisto( h_Jet1pt[4] ,    (Jet1).Pt()  , evt_weight_ );
-        FillHisto( h_Jet1eta[4],    (Jet1).Eta() , evt_weight_ );
-        FillHisto( h_Jet1phi[4],    (Jet1).Phi() , evt_weight_ );
-        FillHisto( h_Jet2pt[4] ,    (Jet2).Pt()  , evt_weight_ );
-        FillHisto( h_Jet2eta[4],    (Jet2).Eta() , evt_weight_ );
-        FillHisto( h_Jet2phi[4],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[4]  , v_jet_idx.size(), evt_weight_ );      
-
-        FillHisto( h_METpt[4]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[4]  ,   Met.Phi()  , evt_weight_ );
+        FillControlPlots(SelectionStage::AfterMETCut, /*includeJets=*/true, /*includeBJets=*/false);
 
         BTaggingSFApply();
 
-        if (NumbJetCut(v_bjet_idx) == false) {continue;}
+        if (NumbJetCut(v_bjet_idx) == false) {traceCutFail("NumbJetCut"); continue;}
 
-        FillHisto( h_DiLepMass[5], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
-        FillHisto( h_Num_PV[5],     num_pv, evt_weight_ );
-        FillHisto( h_Lep1pt[5] ,    (Lep1).Pt()  , evt_weight_ );
-        FillHisto( h_Lep1eta[5],    (Lep1).Eta() , evt_weight_ );
-        FillHisto( h_Lep1phi[5],    (Lep1).Phi() , evt_weight_ );
-        FillHisto( h_Lep2pt[5] ,    (Lep2).Pt()  , evt_weight_ );
-        FillHisto( h_Lep2eta[5],    (Lep2).Eta() , evt_weight_ );
-        FillHisto( h_Lep2phi[5],    (Lep2).Phi() , evt_weight_ );
-
-        FillHisto( h_Jet1pt[5] ,    (Jet1).Pt()  , evt_weight_ );
-        FillHisto( h_Jet1eta[5],    (Jet1).Eta() , evt_weight_ );
-        FillHisto( h_Jet1phi[5],    (Jet1).Phi() , evt_weight_ );
-        FillHisto( h_Jet2pt[5] ,    (Jet2).Pt()  , evt_weight_ );
-        FillHisto( h_Jet2eta[5],    (Jet2).Eta() , evt_weight_ );
-        FillHisto( h_Jet2phi[5],    (Jet2).Phi() , evt_weight_ );
-        FillHisto( h_Num_Jets[5]  , v_jet_idx.size(), evt_weight_ );      
-
-        FillHisto( h_METpt[5]   ,   Met.Pt()  , evt_weight_ );
-        FillHisto( h_METphi[5]  ,   Met.Phi()  , evt_weight_ );
+        FillControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
         SetUpKINObs();
+        if (!isKinSol) {
+            traceCutFail("KinSolv (no solution)");
+        }
         if (isKinSol)
         {
-            FillHisto( h_Lep1pt[8] , Lep1.Pt() , evt_weight_ );
-            FillHisto( h_Lep2pt[8] , Lep2.Pt() , evt_weight_ );
-            FillHisto( h_Lep1eta[8], Lep1.Eta(), evt_weight_ );
-            FillHisto( h_Lep2eta[8], Lep2.Eta(), evt_weight_ );
-            FillHisto( h_Lep1phi[8], Lep1.Phi(), evt_weight_ );
-            FillHisto( h_Lep2phi[8], Lep2.Phi(), evt_weight_ );
-
-            FillHisto( h_Jet1pt[8] , Jet1.Pt() , evt_weight_ );
-            FillHisto( h_Jet2pt[8] , Jet2.Pt() , evt_weight_ );
-            FillHisto( h_Jet1eta[8], Jet1.Eta(), evt_weight_ );
-            FillHisto( h_Jet2eta[8], Jet2.Eta(), evt_weight_ );
-            FillHisto( h_Jet1phi[8], Jet1.Phi(), evt_weight_ );
-            FillHisto( h_Jet2phi[8], Jet2.Phi(), evt_weight_ );
-            FillHisto( h_METpt[8]  , Met.Pt()  , evt_weight_ );
-            FillHisto( h_METphi[8] , Met.Phi() , evt_weight_ );
-            //FillHisto( h_HT[8]     , AllJetpt   , evt_weight_);
-            
-            FillHisto( h_DiLepMass[8], ( Lep1+Lep2 ).M(), evt_weight_ );
-            
-            FillHisto( h_Num_PV[8]   , num_pv          ,  evt_weight_ );
-            FillHisto( h_Num_Jets[8] , v_jet_idx.size(),  evt_weight_ );
-            FillHisto( h_Num_bJets[8], v_bjet_idx.size(), evt_weight_ );
+            if (isTracedEvent) {
+                std::cout << "[TRACE " << traceRun << ":" << traceLumi << ":" << traceEvt
+                          << "] survived to Top-Recon. stage: evt_weight=" << evt_weight_
+                          << " Top.M()=" << Top.M() << " AnTop.M()=" << AnTop.M() << std::endl;
+            }
+            //FillHisto( h_HT[selectionIndex(SelectionStage::AfterTopReconstruction)]     , AllJetpt   , evt_weight_);
+            // h_HT stays commented out above, unchanged - just relocated
+            // next to the stage it documents.
+            FillControlPlots(SelectionStage::AfterTopReconstruction, /*includeJets=*/true, /*includeBJets=*/true);
             if ( Top.Pt() > AnTop.Pt() ) { Top1 = Top; Top2 = AnTop; }
             else { Top1 = AnTop; Top2 = Top; }
             
@@ -1005,7 +1056,8 @@ void Analysis::Loop() {
 
 
     }// end of event iteration //
-    std::cout << "End Loop !!" << std::endl;
+    logger_.Info() << "End Loop !!" << std::endl;
+    fallbackCounter_.PrintSummary();
 }
 
 
@@ -1015,7 +1067,7 @@ std::unique_ptr<TTreeReaderValue<T>> Analysis::DeepCopy(const std::unique_ptr<TT
         // If source pointer is valid, make a deep copy
         return std::make_unique<TTreeReaderValue<T>>(*src);
     } else {
-	std::cerr << "no source !!! "  << std::endl;
+	logger_.Warning() << "no source !!! "  << std::endl;
         // If source is nullptr, return nullptr
         return nullptr;
     }
@@ -1028,7 +1080,7 @@ std::string Analysis::removeSubstring(std::string &str, const std::string &keywo
     if (pos != std::string::npos) {
         str.erase(pos);  // 
     }
-    std::cout << "str : " << str << std::endl;
+    logger_.Debug() << "str : " << str << std::endl;
     return str; 
 }
 
@@ -1063,7 +1115,7 @@ bool Analysis::SelTrigger(std::vector<std::string> v_sel)
 		//std::cout << "it " << it->first << " " << **(it->second)<< std::endl;
             if (**(it->second)) {ptrigindex++;}
         } else {
-            std::cerr << "Error: Trigger " << trgName << " not found in triggerList." << std::endl;
+            logger_.Error() << "Error: Trigger " << trgName << " not found in triggerList." << std::endl;
         }
     }
 
@@ -1102,7 +1154,7 @@ bool Analysis::Trigger()
            //trigpass = pass_single || pass_double;
            return trigpass;
         } else {
-           std::cout << "[Trigger] Check FileName_ for dimuon in 2018" << std::endl;
+           logger_.Warning() << "[Trigger] Check FileName_ for dimuon in 2018" << std::endl;
            return false;
         }
      }
@@ -1129,7 +1181,7 @@ bool Analysis::Trigger()
            return trigpass;
         }
         else {
-           std::cout << "[Trigger] Check FileName_ for muel in 2018" << std::endl;
+           logger_.Warning() << "[Trigger] Check FileName_ for muel in 2018" << std::endl;
            return false;
         }
      }
@@ -1142,13 +1194,13 @@ bool Analysis::Trigger()
            trigpass = pass_single || pass_double;
            return trigpass;
         } else {
-           std::cout << "[Trigger] Check FileName_ for dielec in 2018 : FileName_ : " << FileName_ << std::endl;
+           logger_.Warning() << "[Trigger] Check FileName_ for dielec in 2018 : FileName_ : " << FileName_ << std::endl;
            return false;
         }
      }
 
      else {
-        std::cout << "[Trigger] Check Decaymode for 2018" << std::endl;
+        logger_.Warning() << "[Trigger] Check Decaymode for 2018" << std::endl;
         return false;
      }
   }
@@ -1165,7 +1217,7 @@ bool Analysis::Trigger()
         trigpass = pass_double;
         return trigpass;
      } else {
-        std::cout << "[Trigger] Check FileName_ for 2016/2017" << std::endl;
+        logger_.Warning() << "[Trigger] Check FileName_ for 2016/2017" << std::endl;
         return false;
      }
   }
@@ -1205,14 +1257,14 @@ TString Analysis::SetInputFileName(std::string inname)
       }
    }
    
-   std::cout << "Original input: " << inname << ", processed name: " << inputName << std::endl;
+   logger_.Info() << "Original input: " << inname << ", processed name: " << inputName << std::endl;
    
    return inputName; 
 }
 
 void Analysis::MCSF()
 {
-    if (FileName_.Contains("Data")||FileName_.Contains("Single")||FileName_.Contains("EG")){ mc_sf_ = 1.; std::cout << "mc_sf_ : " << mc_sf_ << std::endl; return; }
+    if (FileName_.Contains("Data")||FileName_.Contains("Single")||FileName_.Contains("EG")){ mc_sf_ = 1.; logger_.Info() << "mc_sf_ : " << mc_sf_ << std::endl; return; }
     /// Open Xsec Tables ///
     FILE *xsecs_;
     char sampleName[1000];
@@ -1238,7 +1290,7 @@ void Analysis::MCSF()
        //cout << "Load Xsection Table!" << std::endl;
        while (fscanf(xsecs_, "%s %d %d %d %d %lf %lf\n", sampleName, &totalevt_, &positive_, &negative_, &posi_nega_, &xsec_, &br_ ) != EOF)
        {
-          std::cout 
+          logger_.Info()
           << "sampleName : " << sampleName << " totalevt_ : " << totalevt_
           << " positive_ " << positive_ << " negative_ : " << negative_ 
           << " posi_nega_ " << posi_nega_ << " xsec_ : " << xsec_ 
@@ -1253,18 +1305,18 @@ void Analysis::MCSF()
        }
        fclose(xsecs_);
     }
-    else {std::cout << "No xsec_filePath !!!" << xsec_filePath << std::endl;return;} 
-    std::cout << "Lumi : " << Lumi << std::endl;
+    else {logger_.Error() << "No xsec_filePath !!!" << xsec_filePath << std::endl;return;} 
+    logger_.Info() << "Lumi : " << Lumi << std::endl;
     double lumi = Lumi/1000000;
     auto it = m_sam_xsec.find(FileName_.Data());
     if (it !=  m_sam_xsec.end()){
-        std::cout << "SK Key " << FileName_.Data() << " found in the std::map."<< std::endl;
+        logger_.Info() << "SK Key " << FileName_.Data() << " found in the std::map."<< std::endl;
         mc_sf_ = (m_sam_xsec[FileName_.Data()]*m_sam_br[FileName_.Data()]*lumi)/m_sam_posi_nega[FileName_.Data()];
-        std::cout << "mc_sf_ " << mc_sf_ << std::endl;
+        logger_.Info() << "mc_sf_ " << mc_sf_ << std::endl;
     }
     else {
         mc_sf_ =1.;
-        std::cout << "Key " << FileName_.Data() << " not found in the std::map. mc sf is 1" << mc_sf_ << std::endl;
+        logger_.Warning() << "Key " << FileName_.Data() << " not found in the std::map. mc sf is 1" << mc_sf_ << std::endl;
     }
     return;
 }
@@ -1312,7 +1364,7 @@ void Analysis::L1PreFireApply()
     }
     else if (!strstr(sys, "none")) {
         // Only print error if not "none"
-        std::cout << "L1Prefiring sys Error ... Default is Weight_L1Prefiring ... : " << L1PreFireSys << std::endl;
+        logger_.Warning() << "L1Prefiring sys Error ... Default is Weight_L1Prefiring ... : " << L1PreFireSys << std::endl;
         l1prefire_ = **branchReader_.floatSingles.at("L1PreFiringWeight_Nom");
     }
     //std::cout << "l1prefire_ : " << l1prefire_ << std::endl;
@@ -1487,7 +1539,7 @@ void Analysis::LeptonSelector() {
         }
     }
     else {
-        std::cerr << "Lepton Selection error" << std::endl;
+        logger_.Error() << "Lepton Selection error" << std::endl;
     }
 
     // Select veto leptons for jet cleaning & third lepton veto
@@ -1558,7 +1610,7 @@ void Analysis::LeptonOrder() {
     }
     // Handle invalid Decaymode
     else {
-        std::cerr << "Lepton TLorentzVector Error: Decaymode = " << Decaymode << std::endl;
+        logger_.Error() << "Lepton TLorentzVector Error: Decaymode = " << Decaymode << std::endl;
     }
 }
 /*
@@ -1661,7 +1713,7 @@ void Analysis::MakeMuonCollection() {
             // Check if Muon_charge exists
             auto muon_charge_it = branchReader_.intVectors.find("Muon_charge");
             if (muon_charge_it == branchReader_.intVectors.end() || !muon_charge_it->second) {
-                std::cerr << "ERROR: Muon_charge branch not available!" << std::endl;
+                logger_.Error() << "ERROR: Muon_charge branch not available!" << std::endl;
                 pre_muons.push_back(muon);
                 continue;
             }
@@ -1680,10 +1732,10 @@ void Analysis::MakeMuonCollection() {
                 auto GenPts = branchReader_.floatVectors.at("GenPart_pt").get();
 
                 if (!branchReader_.BranchIsAvailable("Muon_genPartIdx") || !GenPts || !branchReader_.BranchIsAvailable("Muon_nTrackerLayers")) {
-                    std::cerr << "ERROR: Required MC branches for Rochester correction not available!" << std::endl;
-                    std::cerr << "Muon_genPartIdx: " << (branchReader_.BranchIsAvailable("Muon_genPartIdx") ? "OK" : "NULL") << std::endl;
-                    std::cerr << "GenPart_pt: " << (GenPts ? "OK" : "NULL") << std::endl;
-                    std::cerr << "Muon_nTrackerLayers: " << (branchReader_.BranchIsAvailable("Muon_nTrackerLayers") ? "OK" : "NULL") << std::endl;
+                    logger_.Error() << "ERROR: Required MC branches for Rochester correction not available!" << std::endl;
+                    logger_.Error() << "Muon_genPartIdx: " << (branchReader_.BranchIsAvailable("Muon_genPartIdx") ? "OK" : "NULL") << std::endl;
+                    logger_.Error() << "GenPart_pt: " << (GenPts ? "OK" : "NULL") << std::endl;
+                    logger_.Error() << "Muon_nTrackerLayers: " << (branchReader_.BranchIsAvailable("Muon_nTrackerLayers") ? "OK" : "NULL") << std::endl;
                     pre_muons.push_back(muon);
                     continue;
                 }
@@ -1721,7 +1773,7 @@ void Analysis::MakeJetCollection() {
     pre_jets.clear();
 
     if (jets_pt == nullptr || jets_eta == nullptr || jets_phi == nullptr || jets_M == nullptr) {
-        std::cerr << "Error: Some jet branch pointers are null in MakeJetCollection()" << std::endl;
+        logger_.Error() << "Error: Some jet branch pointers are null in MakeJetCollection()" << std::endl;
         return;
     }
 
@@ -1770,10 +1822,11 @@ void Analysis::MakeJetCollection() {
             genJetIndices.push_back(genIdx);
             
         } catch (const std::exception& e) {
-            std::cerr << "Error reading jet at index " << ijet << ": " << e.what() << std::endl;
-            std::cout << "erro ! "  << std::endl;
-            std::cerr << "Error reading jet at index " << ijet << ": " << e.what() << std::endl;
-            std::cout << ">>> CREATING DUMMY JET AT INDEX " << ijet << " <<<" << std::endl;  // 추가
+            fallbackCounter_.RecordFallback("jet_raw_field_read");
+            logger_.Error() << "Error reading jet at index " << ijet << ": " << e.what() << std::endl;
+            logger_.Error() << "erro ! "  << std::endl;
+            logger_.Error() << "Error reading jet at index " << ijet << ": " << e.what() << std::endl;
+            logger_.Warning() << ">>> CREATING DUMMY JET AT INDEX " << ijet << " <<<" << std::endl;  // 추가
  
             // ============================================================================
             // FIX: Add invalid dummy jet with -999 values to maintain size consistency
@@ -1790,7 +1843,7 @@ void Analysis::MakeJetCollection() {
 
     // Verify size consistency before proceeding
     if (rawJets.size() != static_cast<size_t>(nJets)) {
-        std::cerr << "[ERROR] Size mismatch after jet reading: expected " << nJets 
+        logger_.Error() << "Size mismatch after jet reading: expected " << nJets
                   << ", got " << rawJets.size() << std::endl;
         pre_jets.clear();
         return;
@@ -1834,7 +1887,7 @@ void Analysis::MakeJetCollection() {
         raw_met_phi = branchReader_.GetFloatSingleValueByAlias({"RawPuppiMET_phi"});
     }
     else {
-	    std::cerr << "[ERROR] There is no MET type. Check out your Configuration! Default is PuppiMET " << std::endl;
+	    logger_.Error() << "There is no MET type. Check out your Configuration! Default is PuppiMET " << std::endl;
         raw_met_pt  = branchReader_.GetFloatSingleValueByAlias({"RawPuppiMET_pt"});
         raw_met_phi = branchReader_.GetFloatSingleValueByAlias({"RawPuppiMET_phi"});
     }
@@ -1851,7 +1904,7 @@ void Analysis::MakeJetCollection() {
         ? (branchReader_.BranchIsAvailable("RawMET_pt") && branchReader_.BranchIsAvailable("RawMET_phi"))
         : (branchReader_.BranchIsAvailable("RawPuppiMET_pt") && branchReader_.BranchIsAvailable("RawPuppiMET_phi"));
     if (!haveRawMet) {
-        std::cerr << "[ERROR] RawMET_pt/RawMET_phi (or RawPuppiMET_pt/RawPuppiMET_phi for Puppi) "
+        logger_.Error() << "RawMET_pt/RawMET_phi (or RawPuppiMET_pt/RawPuppiMET_phi for Puppi) "
                   << "not available in this file - cannot compute the official Type-1 MET starting "
                   << "point (see NOTES.md, item 17)." << std::endl;
         throw std::runtime_error(
@@ -1881,12 +1934,13 @@ void Analysis::MakeJetCollection() {
         jetAreas,
         rho,
         isData,
-        true,
-        true,
+        dojes,
+        dojer,
         genJets,
         genJetIndices,
         run_number_for_jec,
-        event_number_for_jer
+        event_number_for_jer,
+        JERSys.Data()
     );
 
     // ApplyType1METWithCorrT1 is the sole MET calculation, matching the CMS
@@ -1936,9 +1990,11 @@ void Analysis::MakeJetCollection() {
         Met = SSBCorr->ApplyType1METWithCorrT1(
             raw_met_pt, raw_met_phi,
             rawJets, rawFactors, jetAreas, jetMuonSubtrFactors, jetChEmEFVec, jetNeEmEFVec,
+            genJetIndices,
             corrT1RawPtVec, corrT1EtaVec, corrT1PhiVec, corrT1AreaVec, corrT1MuonSubtrVec,
-            rho, isData, /*applyJES=*/true, /*applyJER=*/true,
-            genJets, run_number_for_jec, event_number_for_jer
+            rho, isData, /*applyJES=*/dojes, /*applyJER=*/dojer,
+            genJets, run_number_for_jec, event_number_for_jer,
+            JERSys.Data()
         );
     } else {
         // Hard error instead of a silent fallback: CorrT1METJet_*/
@@ -1946,7 +2002,7 @@ void Analysis::MakeJetCollection() {
         // absence means either a wrong/older NanoAOD file was fed to this
         // v15 framework, or a branch_list.txt regression - either way, MET
         // must not silently switch to the old non-official recipe.
-        std::cerr << "[ERROR] CorrT1METJet_rawPt or Jet_muonSubtrFactor not available in this "
+        logger_.Error() << "CorrT1METJet_rawPt or Jet_muonSubtrFactor not available in this "
                   << "file - cannot compute the official Type-1 MET (see NOTES.md, item 16). "
                   << "This framework no longer falls back to the old simplified MET recipe."
                   << std::endl;
@@ -1961,7 +2017,7 @@ void Analysis::MakeJetCollection() {
     else if (RunPeriod.Contains("2016Post")) yearForm = "2016nonAPV";
     else if (RunPeriod.Contains("2017")) yearForm = "2017";
     else if (RunPeriod.Contains("2018")) yearForm = "2018";
-    else cout << "[Warning check the RunPeriod] : " << RunPeriod  << endl;
+    else logger_.Warning() << "[Warning check the RunPeriod] : " << RunPeriod  << std::endl;
     bool isMC = !isData; bool isUL = true; bool isPuppi = METtype == "Puppi";
 
 
@@ -1971,8 +2027,8 @@ void Analysis::MakeJetCollection() {
     // VERIFICATION: Check final size consistency
     // ============================================================================
     if (pre_jets.size() != static_cast<size_t>(nJets)) {
-        std::cout << "[INFO] MakeJetCollection: Input jets=" << nJets 
-                  << ", Output corrected jets=" << pre_jets.size() 
+        logger_.Info() << "MakeJetCollection: Input jets=" << nJets
+                  << ", Output corrected jets=" << pre_jets.size()
                   << " (some jets may have been filtered by JEC/JER)" << std::endl;
     }
 }
@@ -2008,7 +2064,7 @@ bool Analysis::NumIsoLeptons(int nNLepsCut) // YOU SHOULD CALL THIS FUNCTION AFT
         }
     }
     else {
-        std::cerr << "Error: Unrecognized decay mode in NumIsoLeptons()" << std::endl;
+        logger_.Error() << "Error: Unrecognized decay mode in NumIsoLeptons()" << std::endl;
     }
     //std::cout << "v_muon_idx.size() "<< v_muon_idx.size() << "numLeptons " << numLeptons << std::endl; 
     return numLeptons;
@@ -2017,7 +2073,7 @@ bool Analysis::NumIsoLeptons(int nNLepsCut) // YOU SHOULD CALL THIS FUNCTION AFT
 void Analysis::JetSelector() {
     // Pre-conditions check
     if (!object_variables_set_) {
-        std::cerr << "ERROR: JetSelector() called before SetObjectVariable()!" << std::endl;
+        logger_.Error() << "ERROR: JetSelector() called before SetObjectVariable()!" << std::endl;
         throw std::runtime_error("SetObjectVariable() must be called before JetSelector()");
     }
 
@@ -2026,7 +2082,7 @@ void Analysis::JetSelector() {
     
     // Check if necessary pointers are initialized
     if (jets_pt == nullptr || jets_eta == nullptr || jets_phi == nullptr || jets_M == nullptr) {
-        std::cerr << "Error: Basic jet variables (pt, eta, phi, M) are not initialized. Make sure SetObjectVariable() was called." << std::endl;
+        logger_.Error() << "Error: Basic jet variables (pt, eta, phi, M) are not initialized. Make sure SetObjectVariable() was called." << std::endl;
         return;
     }
 
@@ -2170,14 +2226,14 @@ TLorentzVector Analysis::JERSmearing(TLorentzVector* jet, int idx_, TString op_)
     if (op_.Contains("Norm")){
         //jerfrac_ = Jet_EnergyResolution_SF->at(idx_);
     }
-    else if (op_ == "Up"){std::cout << "no op " << std::endl;
+    else if (op_ == "Up"){logger_.Debug() << "no op " << std::endl;
         //jerfrac_ = Jet_EnergyResolution_SFUp->at(idx_);
     }
-    else if (op_ == "Down"){std::cout << "no op" << std::endl;
+    else if (op_ == "Down"){logger_.Debug() << "no op" << std::endl;
         //jerfrac_ = Jet_EnergyResolution_SFDown->at(idx_);
     }
     else{
-        std::cout << "Check out your JERSmearing option !!" << "op_ : "<< op_<< std::endl;
+        logger_.Warning() << "Check out your JERSmearing option !!" << "op_ : "<< op_<< std::endl;
     }
     if (dojer && !TString(FileName_).Contains("Data"))
     {
@@ -2200,7 +2256,7 @@ bool Analysis::LeptonsPtAddtional()//YOU SHOULD REQUIRE THIS FUNCTION AFTER NumI
          TString(Decaymode).Contains( "muel" )      ){  if ( Lep1.Pt() > 25 && Lep2.Pt() > 20 ) {lepptadd=true;} } //Pt of Leading Lepton should be over than 25 GeV and Second Leading Lepton Pt should be over thand 20 GeV.
        
     else if ( TString(Decaymode).Contains( "muonJet" ) ){if( v_lepton_idx.size() == 1){lepptadd=true;} }
-    else { std::cerr << "?? something wrong " << std::endl; }                                                                                      
+    else { logger_.Error() << "?? something wrong " << std::endl; }                                                                                      
     return lepptadd;
 }
 void Analysis::Start()
@@ -2214,7 +2270,7 @@ void Analysis::Start()
       //fout = new TFile(Form("output/%s",outfile),"RECREATE");
       fout = new TFile(Form("output/%s", outfile.c_str()), "RECREATE");
    }
-   std::cout << "fout - getname : " << fout->GetName() << std::endl;
+   logger_.Info() << "fout - getname : " << fout->GetName() << std::endl;
    fout->cd("");
 
    TDirectory *dir = gDirectory;
@@ -2428,7 +2484,7 @@ void Analysis::SelectVetoMuons() {
         }
     }
     else {
-        std::cerr << "Error: Unrecognized decay mode in SelectVetoMuons!" << std::endl;
+        logger_.Error() << "Error: Unrecognized decay mode in SelectVetoMuons!" << std::endl;
     }
     //std::cout << "IN SelectVetoMuons : muonsveto : " << muonsveto.size() << std::endl;
     return;    
@@ -2527,7 +2583,7 @@ void Analysis::SelectVetoElectrons() {
         }
     }
     else {
-        std::cerr << "Error: Unrecognized decay mode in SelectVetoElectrons!" << std::endl;
+        logger_.Error() << "Error: Unrecognized decay mode in SelectVetoElectrons!" << std::endl;
     }
     //std::cout << "elecsveto : " << elecsveto.size()<< std::endl;
 }
@@ -2579,7 +2635,7 @@ bool Analysis::ThirdLeptonVeto()
         }
     }
     else {
-        std::cerr << "Error: Unrecognized decay mode in ThirdLeptonVeto function!" << std::endl;
+        logger_.Error() << "Error: Unrecognized decay mode in ThirdLeptonVeto function!" << std::endl;
     }
     
     return third_veto;
@@ -2639,7 +2695,7 @@ bool Analysis::ZVetoCut()
       if ( ((Lep1)+(Lep2)).M() <= 76 || ((Lep1)+(Lep2)).M() >= 106 ){ zvetocut = true; }
    }        
    else if ( TString(Decaymode).Contains( "muel" ) ){ zvetocut = true; }
-   else {std::cerr << "ZVeto Error !!" << std::endl;}
+   else {logger_.Error() << "ZVeto Error !!" << std::endl;}
                
    return zvetocut;
 }
@@ -2662,7 +2718,7 @@ bool Analysis::METCut(TLorentzVector met)
       if (met.Pt() > 40) { metcut =true; }
    }        
    else if ( TString(Decaymode).Contains( "muel" ) ){ metcut =true; }
-   else {std::cerr << "METCut Error !!" << std::endl;}
+   else {logger_.Error() << "METCut Error !!" << std::endl;}
    return metcut;
 }
 
@@ -2753,7 +2809,7 @@ void Analysis::SetUpKINObs()
          W2        = AnLep  + Nu;
       }
    } else {
-      std::cout << "Not enough b-jets or jets for kinematic reconstruction" << std::endl;
+      logger_.Warning() << "Not enough b-jets or jets for kinematic reconstruction" << std::endl;
    }
    
    // Clean up
@@ -2799,7 +2855,7 @@ void Analysis::LeptonSFApply()
         else {
            lep_sf = 1.0;
           // std::cout << "LeptonGetSF error !!!!" << std::endl;
-           std::cout << "[WARNING] Unknown decay mode: " << Decaymode
+           logger_.Warning() << "[WARNING] Unknown decay mode: " << Decaymode
            << ", setting lep_sf = 1.0" << std::endl;
 
         }
@@ -2822,7 +2878,7 @@ void Analysis::PUWeightApply()
        double pu_weight_central = SSBCorr->GetPUWeight( **branchReader_.floatSingles.at("Pileup_nTrueInt") , PileUpSys.Data() );
        if (TString(PileUpSys).Contains("central") || TString(PileUpSys).Contains("nominal")  ) { puweight_   = pu_weight_central;}
        else {  
-          std::cerr << "PUWeightApply Error... Defalut is Weight_PileUp ... : " << PileUpSys << std::endl;
+          logger_.Warning() << "PUWeightApply Error... Defalut is Weight_PileUp ... : " << PileUpSys << std::endl;
        }
        evt_weight_ = evt_weight_*puweight_;  // apply PileUpReweight //
     }  
@@ -2849,7 +2905,7 @@ void Analysis::TriggerSFApply()
             triggersf_ = SSBCorr->TrigDiMuon_Eff(Lep1, Lep2, TrigSFSys);
         }
         else {
-            std::cerr << "[TriggerSFApply] WARNING: Unknown Decaymode = " << Decaymode << std::endl;
+            logger_.Warning() << "[TriggerSFApply] WARNING: Unknown Decaymode = " << Decaymode << std::endl;
         }
 
         evt_weight_ *= triggersf_;  // Apply the trigger scale factor
@@ -2904,7 +2960,7 @@ void Analysis::ApplyJetPUIDEventWeights() {
         return;  // Already applied in JetSelector()
     }
 
-    std::cerr << "WARNING: ApplyJetPUIDEventWeights() called but PUID weights should be applied in JetSelector()!" << std::endl;
+    logger_.Warning() << "WARNING: ApplyJetPUIDEventWeights() called but PUID weights should be applied in JetSelector()!" << std::endl;
 }
 
 void Analysis::BTaggingSFApply() {
@@ -2918,7 +2974,7 @@ void Analysis::BTaggingSFApply() {
     
     // Check if jets and btag info are available
     if (v_jet_idx.empty() || jets_btag == nullptr) {
-        std::cout << "No jets selected or btag info unavailable - B-tagging SF = 1.0" << std::endl;
+        logger_.Info() << "No jets selected or btag info unavailable - B-tagging SF = 1.0" << std::endl;
         return;
     }
     
@@ -2938,7 +2994,7 @@ void Analysis::BTaggingSFApply() {
     bool hasHadronFlavour = branchReader_.BranchIsAvailable("Jet_hadronFlavour");
 
     if (!hasHadronFlavour) {
-        std::cout << "WARNING: Jet_hadronFlavour branch not available - using flavor=0 for all jets" << std::endl;
+        logger_.Warning() << "WARNING: Jet_hadronFlavour branch not available - using flavor=0 for all jets" << std::endl;
     }
 
     // Collect jet information
@@ -2998,7 +3054,8 @@ void Analysis::BTaggingSFApply() {
                   << " (total evt_weight: " << evt_weight_ << ")" << std::endl;*/
                   
     } catch (const std::exception& e) {
-        std::cerr << "Error in BTaggingSFApply: " << e.what() << std::endl;
+        fallbackCounter_.RecordFallback("btag_sf");
+        logger_.Error() << "Error in BTaggingSFApply: " << e.what() << std::endl;
         btag_sf_weight_ = 1.0; // Default on error
     }
     
@@ -3032,7 +3089,7 @@ void Analysis::CollectPUIDCandidates() {
     }
     
     if (jets_pt == nullptr) {
-        std::cerr << "[WARNING] CollectPUIDCandidates: jets_pt is nullptr" << std::endl;
+        logger_.Warning() << "[WARNING] CollectPUIDCandidates: jets_pt is nullptr" << std::endl;
         return;
     }
     
@@ -3045,7 +3102,7 @@ void Analysis::CollectPUIDCandidates() {
     Int_t nJets_safe = std::min(nJets_original, nJets_corrected);
     
     if (nJets_original != nJets_corrected) {
-        std::cout << "[INFO] CollectPUIDCandidates: Size mismatch detected - "
+        logger_.Info() << "[INFO] CollectPUIDCandidates: Size mismatch detected - "
                   << "original=" << nJets_original << ", corrected=" << nJets_corrected 
                   << ", using=" << nJets_safe << std::endl;
     }
@@ -3158,7 +3215,8 @@ void Analysis::PUIDSFApply() {
                       << ", SF=" << sf << ", Eff=" << eff << std::endl;*/
             
         } catch (const std::exception& e) {
-            std::cerr << "[ERROR] PUID SF calculation failed for jet " 
+            fallbackCounter_.RecordFallback("puid_sf");
+            logger_.Error() << "[ERROR] PUID SF calculation failed for jet "
                       << jet_info.original_index << ": " << e.what() << std::endl;
             continue;  // Skip this jet on error
         }

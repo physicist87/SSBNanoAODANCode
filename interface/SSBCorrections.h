@@ -74,25 +74,41 @@ public:
     // rho, unlike SmearJER's internal call, which was already correct).
     double GetJER(double eta, double pt, double rho) const;
 
-    // Smear JER for a MC jet. Delegates the actual hybrid-method/stochastic
-    // decision and random smearing to CMS JME's own "JERSmear" correctionlib
-    // tool (jer_smear.json.gz, a correctionlib `hashprng` node) instead of a
-    // hand-rolled implementation - this is the officially recommended
-    // approach (see the CMS JERC ApplicationTutorial's JecApplication.cpp,
-    // Applier::jerFactor): it takes (JetPt, JetEta, GenPt-or-(-1), Rho,
-    // EventID, JER resolution, JER SF) and returns a multiplicative smearing
-    // factor directly - reproducibility/seeding is handled internally by
-    // correctionlib, not by us. gen_pt < 0 is the "no gen match" sentinel
-    // (previously, no gen match meant JER was skipped entirely for that jet -
-    // now it's passed through and the JERSmear tool decides scaling vs
-    // stochastic itself, including its own 3-sigma consistency check).
-    double SmearJER(double reco_pt, double gen_pt, double eta, double phi, double rho,
+    // Smear JER for a MC jet. Delegates the actual random smearing to CMS
+    // JME's own "JERSmear" correctionlib tool (jer_smear.json.gz, a
+    // correctionlib `hashprng` node) when loaded - this is the officially
+    // recommended approach (see the CMS JERC ApplicationTutorial's
+    // JecApplication.cpp, Applier::jerFactor): it takes (JetPt, JetEta,
+    // GenPt-or-(-1), Rho, EventID, JER resolution, JER SF) and returns a
+    // multiplicative smearing factor directly - reproducibility/seeding is
+    // handled internally by correctionlib, not by us.
+    //
+    // 2026-08 fix: gen_pt is no longer trusted as-is from the caller,
+    // regardless of source (Jet_genJetIdx or a DeltaR rematch). The
+    // JERSmear correctionlib tool's evaluate() schema has no room for gen
+    // eta/phi at all (only the 7 values above) - it cannot itself verify
+    // the match is within the JERC-recommended dR<0.2 cone, so per the
+    // tutorial's own Applier::jerFactor(), that check (dR<0.2 AND
+    // |reco_pt-gen_pt|<3*resolution*reco_pt) must happen in the CALLER,
+    // before gen_pt is ever passed to the tool (or to the in-house
+    // fallback below, which now applies the same two-condition gate
+    // instead of only the pt-consistency half of it). gen_eta/gen_phi are
+    // therefore now required inputs whenever gen_pt >= 0 - pass 0.0/0.0
+    // together with gen_pt = -1.0 for "no gen match" (the eta/phi values
+    // are unused in that case).
+    double SmearJER(double reco_pt, double gen_pt, double gen_eta, double gen_phi,
+                     double eta, double phi, double rho,
                      ULong64_t event, const std::string& jer_tag = "nominal") const;
 
-    // Reco/gen matching for JER hybrid smearing
+    // Reco/gen matching for JER hybrid smearing. out_eta/out_phi, if
+    // non-null, receive the matched gen jet's eta/phi (needed by SmearJER's
+    // own dR re-validation - see above) - left at their input value if no
+    // match is found (check the return value, not these, for match status).
     float MatchGenPt(const TLorentzVector& reco_jet,
                      const std::vector<TLorentzVector>& gen_jets,
-                     float maxDR = 0.2) const;
+                     float maxDR = 0.2,
+                     float* out_eta = nullptr,
+                     float* out_phi = nullptr) const;
 
     // Apply JES/JER corrections to build the physics jet collection (pt +
     // mass). Confirmed against the CMS JERC ApplicationTutorial's
@@ -111,6 +127,10 @@ public:
     // run_number is only actually used when the loaded JEC compound correction
     // turns out to need it (see jec_needs_run_) - pass the event's "run" branch
     // value here regardless; it's a no-op for corrections that don't need it.
+    // jerSysTag: "nominal"/"up"/"down" - forwarded to SmearJER()'s jer_tag
+    // param (see there - combines jer_sf_ with jer_sfunc_'s SF uncertainty
+    // as sf*(1+-unc) before smearing). Defaulted so this stays source-compatible
+    // with the one existing call site if it's ever not passed explicitly.
     std::vector<TLorentzVector> ApplyJetCorrections(
         const std::vector<TLorentzVector>& rawJets,
         const std::vector<float>& rawFactors,
@@ -122,7 +142,8 @@ public:
         const std::vector<TLorentzVector>& genJets,
         const std::vector<int>& genJetIndices,
         unsigned int run_number = 0,
-        ULong64_t event_number = 0
+        ULong64_t event_number = 0,
+        const std::string& jerSysTag = "nominal"
     ) const;
 
     // Type-1 MET recomputation that additionally includes NanoAOD's
@@ -146,6 +167,18 @@ public:
     // Only jets passing the Type-1 selection (corrected pt > 15, |eta| < 5.2,
     // chEmEF+neEmEF < 0.90) contribute - CorrT1METJet_ jets have no EM
     // fraction branches (definitionally 0, always pass that part).
+    //
+    // JER gen-matching (2026-08 fix): regular Jet_ branch jets now use
+    // Jet_genJetIdx (jetGenJetIndices, same convention/index as
+    // ApplyJetCorrections' genJetIndices) instead of a DeltaR rematch
+    // against genJets - there is no reason for the MET path to disagree
+    // with the physics-jet path about which gen jet a given reco jet
+    // matches, and NanoAOD already provides that match directly.
+    // CorrT1METJet_ jets still use the DeltaR-based MatchGenPt() rematch
+    // internally, since that collection has no genJetIdx branch at all -
+    // this is the same acknowledged-imperfect approach the CMS JERC
+    // tutorial itself uses for these jets, not something specific to this
+    // code.
     TLorentzVector ApplyType1METWithCorrT1(
         double raw_met_pt,
         double raw_met_phi,
@@ -155,6 +188,7 @@ public:
         const std::vector<float>& jetMuonSubtrFactors,       // Jet_muonSubtrFactor
         const std::vector<float>& jetChEmEF,                 // Jet_chEmEF (Type-1 selection cut)
         const std::vector<float>& jetNeEmEF,                 // Jet_neEmEF (Type-1 selection cut)
+        const std::vector<int>& jetGenJetIndices,             // Jet_genJetIdx - same convention as ApplyJetCorrections
         const std::vector<float>& corrT1RawPt,               // CorrT1METJet_rawPt (already raw)
         const std::vector<float>& corrT1Eta,                 // CorrT1METJet_eta
         const std::vector<float>& corrT1Phi,                 // CorrT1METJet_phi
@@ -166,7 +200,14 @@ public:
         bool applyJER,
         const std::vector<TLorentzVector>& genJets,
         unsigned int run_number = 0,
-        ULong64_t event_number = 0
+        ULong64_t event_number = 0,
+        // Same "nominal"/"up"/"down" tag as ApplyJetCorrections' jerSysTag -
+        // forwarded to the SmearJER() calls inside this function's
+        // accumulate lambda (both the regular-Jet_ loop and the
+        // CorrT1METJet_ loop use the same tag; MET does not support mixing
+        // "smear regular jets nominal, CorrT1 jets up" or similar - one tag
+        // per job, matching every other systematic in this codebase).
+        const std::string& jerSysTag = "nominal"
     ) const;
 
     double GetMuonRecoSF(double pt, double eta) const;
@@ -309,6 +350,23 @@ private:
     // (see cpp) - loudly warned once, since that fallback is not the
     // officially recommended approach.
     std::shared_ptr<const correction::Correction> jer_smear_;
+    // JES full-uncertainty-set systematic (2026-08). Config-driven, resolved
+    // once at construction from JESSys (a CMS-style NP name, e.g.
+    // "CMS_scale_j_AbsoluteScale" or "CMS_scale_j_Total") + JESSysDir
+    // ("up"/"down") via the LookupJesFullSetUncertaintyKey() table in
+    // SSBCorrections.cpp (sourced from the official JERC tutorial's
+    // JecConfigAK4.json, not derived by string-substitution). nullptr/empty
+    // means "no JES systematic requested" - GetCorrectedJetPt() checks this
+    // and is a no-op multiplier (factor 1.0) in that case, same as every
+    // other optional correction in this class. Applying the shift inside
+    // GetCorrectedJetPt() itself (rather than threading it through
+    // ApplyJetCorrections()/ApplyType1METWithCorrT1() as an extra parameter,
+    // the way JER's jerSysTag works) means it automatically reaches both the
+    // physics jet path AND the Type-1 MET path - both call GetCorrectedJetPt()
+    // for their "fully corrected" pt - matching the tutorial's requirement
+    // that a JES variation apply consistently to both.
+    std::shared_ptr<const correction::Correction> jes_unc_source_;
+    std::string jes_sys_dir_; // "up" or "down"; only meaningful if jes_unc_source_ is loaded
     std::shared_ptr<const correction::Correction> pujetid_sf_; // PU JetID SF
 
     // B-tagging corrections map
