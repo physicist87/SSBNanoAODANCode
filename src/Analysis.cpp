@@ -18,12 +18,12 @@ Analysis::Analysis(TChain *inputChain, std::string inputName, std::string seDirN
     std::string confDir = "./configs/";
     std::string confpath = "";
     confpath = confDir+configFile;
-    SSBConfReader = new TextReader();
+    SSBConfReader = std::make_unique<TextReader>();
     SSBConfReader->ReadFile(confpath);
     SSBConfReader->ReadVariables();
     SSBConfReader->PrintoutVariables();
-    SSBCorr = new SSBCorrections(SSBConfReader, FileName_.Data());
-    SSBCPVCal = new SSBCPVCalc();
+    SSBCorr = std::make_unique<SSBCorrections>(SSBConfReader.get(), FileName_.Data());
+    SSBCPVCal = std::make_unique<SSBCPVCalc>();
     // Initialize branches based on branch list file (NanoAODBranchReader owns
     // the actual maps/type-detection now - see interface/NanoAODBranchReader.h)
     branchReader_.InitBranches(branchListFile, isData);
@@ -43,36 +43,43 @@ Analysis::Analysis(TChain *inputChain, std::string inputName, std::string seDirN
 }
 
 Analysis::~Analysis() {
-    // Safely delete the TFile object
-
+    // 2026-08: fout/SSBConfReader/SSBCorr/SSBCPVCal are now std::unique_ptr
+    // (see interface/Analysis.h) instead of raw owning pointers - each
+    // would already be freed automatically once this destructor returns,
+    // even with no code here at all. Kept the same explicit if-then-cleanup
+    // shape as before anyway (same log lines, same order) rather than
+    // deleting this whole block, since (a) fout specifically still needs
+    // its Write()/Close() sequence run BEFORE it's released, not just
+    // "eventually freed", and (b) the existing log lines are genuinely
+    // useful in a grid job's stdout for confirming teardown order - this is
+    // a type change (raw pointer -> unique_ptr), not a "stop logging
+    // destruction" change. `.reset()` (a no-op if already null, same as
+    // `delete` on a null pointer was) replaces the old `delete ptr; ptr =
+    // nullptr;` pair - one call does both.
     if (fout) {
         fout->Write();
         logger_.Info() << "output file Name : " <<  fout->GetName() << std::endl;
-        fout->Close(); // Close the file before deleting
-        delete fout;
-        fout = nullptr;
+        fout->Close(); // Close the file before releasing
+        fout.reset();
         logger_.Info() << "fout successfully deleted." << std::endl;
     }
 
-    // Safely delete the TextReader object
+    // Safely release the TextReader object
     if (SSBConfReader) {
-        delete SSBConfReader;
-        SSBConfReader = nullptr;
+        SSBConfReader.reset();
         logger_.Info() << "SSBConfReader successfully deleted." << std::endl;
     }
 
-    // Safely delete the TextReader object
+    // Safely release the SSBCorrections object
     if (SSBCorr) {
-        delete SSBCorr;
-        SSBCorr = nullptr;
+        SSBCorr.reset();
         logger_.Info() << "SSBCorr successfully deleted." << std::endl;
     }
 /*    else {
     std::cout << "Error !! SSBConfReader " << std::endl;
     }*/
     if (SSBCPVCal) {
-        delete SSBCPVCal;
-        SSBCPVCal = nullptr;
+        SSBCPVCal.reset();
         logger_.Info() << "SSBCPVCal successfully deleted." << std::endl;
     }
     // Add other cleanup as needed for dynamically allocated objects
@@ -2263,12 +2270,12 @@ void Analysis::Start()
 {
    //fout = new TFile(Form("output/%s",outfile),"RECREATE");
    if (strcmp(outdir.c_str(), "None") != 0 ) {
-      fout = new TFile(Form("gsidcap://cluster142.knu.ac.kr/%s/%s", outdir.c_str(), outfile.c_str()), "RECREATE");
+      fout = std::make_unique<TFile>(Form("gsidcap://cluster142.knu.ac.kr/%s/%s", outdir.c_str(), outfile.c_str()), "RECREATE");
 
    }
    else {
       //fout = new TFile(Form("output/%s",outfile),"RECREATE");
-      fout = new TFile(Form("output/%s", outfile.c_str()), "RECREATE");
+      fout = std::make_unique<TFile>(Form("output/%s", outfile.c_str()), "RECREATE");
    }
    logger_.Info() << "fout - getname : " << fout->GetName() << std::endl;
    fout->cd("");

@@ -58,6 +58,23 @@ Analysis(TChain *chain, std::string inputName, std::string seDirName, std::strin
     //~Analysis() = default;
     ~Analysis();
 
+    // 2026-08: Analysis owns 4 heap objects (fout/SSBConfReader/SSBCorr/
+    // SSBCPVCal - see their std::unique_ptr declarations below) that its
+    // destructor cleans up. Before this, the class had no user-declared
+    // copy constructor/assignment, so the compiler-generated (shallow-copy)
+    // versions were still callable - copying an Analysis would have copied
+    // those 4 raw pointers, and both copies' destructors would then double-
+    // delete the same objects. Never actually triggered in practice (this
+    // class is constructed once in main_ssb.cpp and never copied), but it
+    // was a live footgun. Deleting these explicitly documents "this class
+    // is not copyable" instead of relying on nobody happening to copy it -
+    // matches the pattern SSBCorrections already uses for the same reason.
+    // (Switching the 4 pointers to unique_ptr below would make this
+    // implicit too, but explicit is clearer for a reader who doesn't
+    // already know that rule.)
+    Analysis(const Analysis&) = delete;
+    Analysis& operator=(const Analysis&) = delete;
+
     // Set variable function
     void SetVariables();
     // Event loop function
@@ -68,11 +85,21 @@ Analysis(TChain *chain, std::string inputName, std::string seDirName, std::strin
     void DeclareHistos();
 private:
     // TTreeReader and TChain
+    // chain is NOT owned by Analysis - it's constructed by the caller
+    // (main_ssb.cpp) and passed in; Analysis only observes it. Left as a
+    // raw pointer deliberately (a non-owning observer pointer is exactly
+    // what a raw pointer should mean in modern C++ - wrapping it in
+    // unique_ptr here would be wrong, since that implies ownership).
     TChain *chain;
     std::string outfile;
     std::string outdir;
     TTreeReader fReader;
-    TFile *fout;
+    // fout IS owned by Analysis (created in Start(), see src/Analysis.cpp) -
+    // std::unique_ptr<TFile> instead of a raw TFile* so the destructor's
+    // cleanup is automatic (and exception-safe: if anything after Start()
+    // in the constructor were to throw, fout would still get cleaned up,
+    // unlike with a raw pointer + explicit delete only in ~Analysis()).
+    std::unique_ptr<TFile> fout;
 
     Long64_t current_entry_;
     bool isjetveto_event_;
@@ -80,9 +107,17 @@ private:
     bool isData;
     bool isBlind;
     //TextReader from Jaehoon.
-    TextReader *SSBConfReader;
-    SSBCorrections *SSBCorr;
-    SSBCPVCalc *SSBCPVCal;
+    // All 3 of these are owned by Analysis (constructed with `new` in the
+    // constructor, cleaned up in ~Analysis()) - unique_ptr instead of raw
+    // pointers for the same reason as fout above: automatic + exception-
+    // safe cleanup, and it's what actually makes copying an Analysis a
+    // compile error (see the deleted copy constructor/assignment above -
+    // a unique_ptr member alone would already block the compiler-generated
+    // copy constructor from existing; the explicit `= delete` above is
+    // there so a reader doesn't have to know that rule to see the intent).
+    std::unique_ptr<TextReader> SSBConfReader;
+    std::unique_ptr<SSBCorrections> SSBCorr;
+    std::unique_ptr<SSBCPVCalc> SSBCPVCal;
     int NumEvt; //
 
     double Lumi;
@@ -511,6 +546,31 @@ private:
     std::string btag_wp_; // "L", "M", "T"
 
 
+    // ------------------------------------------------------------------
+    // Histogram ownership (2026-08 doc note, no behavior change): every
+    // TH1D*/TH2D* below (this section, and the singly-declared ones near
+    // the end of this class - h_Top1Mass and friends) is created with
+    // `new TH1D(...)` in DeclareHistos() while `fout` is the *current*
+    // ROOT directory (see Start(): `fout->cd("")` runs right before
+    // DeclareHistos() is called). ROOT's TH1/TH2 constructors register
+    // themselves with whatever TDirectory is "current" at construction
+    // time (unless SetDirectory(0) is called, which nothing here does) -
+    // so `fout` is the real owner of all of these, not Analysis. This is
+    // why ~Analysis() never deletes any of them individually: `fout->Write()`
+    // + `fout->Close()` + the fout unique_ptr's own destructor already
+    // hands every histogram's lifetime to ROOT's directory-close logic.
+    // Deleting a histogram here on top of that would be a use-after-free
+    // once `fout` closes (or a double-free if Close() itself frees them).
+    // Contrast with SSBCorrections, which DOES manually delete its own
+    // TH2D members (H_trig, eff_histograms_) in its destructor - those are
+    // loaded from an *input* efficiency file, never `fout`-current at
+    // construction, so they're never implicitly claimed by any TDirectory
+    // and genuinely need an explicit delete. Two different histogram-
+    // ownership rules in this codebase, both correct for what each one
+    // actually is - flagging explicitly since "some TH1D* members get
+    // deleted and some don't" looks like an inconsistency/bug at a glance
+    // otherwise.
+    // ------------------------------------------------------------------
     TH1D *h_JetPUIDEvtWeight;
     TH1D *h_bTagEvtWeight;
     TH1D *h_Lep1pt[10];
