@@ -1,4 +1,5 @@
 #include "../interface/NanoAODBranchReader.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -205,4 +206,67 @@ bool NanoAODBranchReader::BranchIsAvailable(const std::string &branchName) const
            intSingles.count(branchName)   || ucharSingles.count(branchName) ||
            uintSingles.count(branchName)  || ulongSingles.count(branchName) ||
            floatSingles.count(branchName) || boolSingles.count(branchName);
+}
+
+// ------------------------------------------------------------------
+// Typed required/optional accessors (see NanoAODBranchReader.h).
+// ------------------------------------------------------------------
+namespace {
+template <typename MapT>
+typename MapT::mapped_type::pointer RequiredFromMap(const MapT &map, const std::string &name) {
+    auto it = map.find(name);
+    if (it == map.end() || !it->second) {
+        throw MissingBranchError(name);
+    }
+    return it->second.get();
+}
+
+template <typename MapT>
+typename MapT::mapped_type::pointer OptionalFromMap(const MapT &map, const std::string &name) {
+    auto it = map.find(name);
+    if (it == map.end() || !it->second) return nullptr;
+    return it->second.get();
+}
+}  // namespace
+
+TTreeReaderArray<Float_t>* NanoAODBranchReader::RequiredFloatArray(const std::string& name) const { return RequiredFromMap(floatVectors, name); }
+TTreeReaderArray<Float_t>* NanoAODBranchReader::OptionalFloatArray(const std::string& name) const { return OptionalFromMap(floatVectors, name); }
+TTreeReaderArray<Bool_t>*  NanoAODBranchReader::RequiredBoolArray(const std::string& name) const  { return RequiredFromMap(boolVectors, name); }
+TTreeReaderArray<Bool_t>*  NanoAODBranchReader::OptionalBoolArray(const std::string& name) const  { return OptionalFromMap(boolVectors, name); }
+TTreeReaderArray<Int_t>*   NanoAODBranchReader::RequiredIntArray(const std::string& name) const   { return RequiredFromMap(intVectors, name); }
+TTreeReaderArray<Int_t>*   NanoAODBranchReader::OptionalIntArray(const std::string& name) const   { return OptionalFromMap(intVectors, name); }
+TTreeReaderArray<UInt_t>*  NanoAODBranchReader::RequiredUIntArray(const std::string& name) const  { return RequiredFromMap(uintVectors, name); }
+TTreeReaderArray<UInt_t>*  NanoAODBranchReader::OptionalUIntArray(const std::string& name) const  { return OptionalFromMap(uintVectors, name); }
+TTreeReaderArray<UChar_t>* NanoAODBranchReader::RequiredUCharArray(const std::string& name) const { return RequiredFromMap(ucharVectors, name); }
+TTreeReaderArray<UChar_t>* NanoAODBranchReader::OptionalUCharArray(const std::string& name) const { return OptionalFromMap(ucharVectors, name); }
+TTreeReaderArray<Short_t>* NanoAODBranchReader::RequiredShortArray(const std::string& name) const { return RequiredFromMap(shortVectors, name); }
+TTreeReaderArray<Short_t>* NanoAODBranchReader::OptionalShortArray(const std::string& name) const { return OptionalFromMap(shortVectors, name); }
+
+TTreeReaderValue<Float_t>* NanoAODBranchReader::RequiredFloatSingle(const std::string& name) const { return RequiredFromMap(floatSingles, name); }
+TTreeReaderValue<Float_t>* NanoAODBranchReader::OptionalFloatSingle(const std::string& name) const { return OptionalFromMap(floatSingles, name); }
+
+Float_t   NanoAODBranchReader::RequiredFloatValue(const std::string& name) const { return **RequiredFromMap(floatSingles, name); }
+Bool_t    NanoAODBranchReader::RequiredBoolValue(const std::string& name) const  { return **RequiredFromMap(boolSingles, name); }
+Int_t     NanoAODBranchReader::RequiredIntValue(const std::string& name) const   { return **RequiredFromMap(intSingles, name); }
+UInt_t    NanoAODBranchReader::RequiredUIntValue(const std::string& name) const  { return **RequiredFromMap(uintSingles, name); }
+ULong64_t NanoAODBranchReader::RequiredULongValue(const std::string& name) const { return **RequiredFromMap(ulongSingles, name); }
+UChar_t   NanoAODBranchReader::RequiredUCharValue(const std::string& name) const { return **RequiredFromMap(ucharSingles, name); }
+
+void NanoAODBranchReader::ValidateRequiredBranches(const std::vector<std::string> &required) const {
+    std::vector<std::string> missing;
+    std::cout << "Required branch validation:" << std::endl;
+    for (const auto &name : required) {
+        bool ok = BranchIsAvailable(name);
+        std::cout << "  " << name << " " << std::string(std::max<int>(1, 30 - (int)name.size()), '.')
+                  << " " << (ok ? "OK" : "MISSING") << std::endl;
+        if (!ok) missing.push_back(name);
+    }
+    if (!missing.empty()) {
+        std::string msg = "Missing required NanoAOD branch(es): ";
+        for (size_t i = 0; i < missing.size(); ++i) {
+            msg += missing[i];
+            if (i + 1 < missing.size()) msg += ", ";
+        }
+        throw std::runtime_error(msg);
+    }
 }

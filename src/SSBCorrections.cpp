@@ -11,22 +11,15 @@
 #include "TLorentzVector.h"
 
 namespace {
-// Generic "optional correctionlib load" helper: runs `loader` (typically a
-// CorrectionSet::from_file(...) + ->at(...)/->compound().at(...) lookup, but
-// anything throwing std::exception on failure works) and returns nullptr
-// with a single [WARNING] instead of letting the exception propagate.
-// Matches the pattern every non-essential correction in this file already
-// followed by hand (jec_l1_, jer_sfunc_, jer_smear_, pujetid_sf_,
-// jetvetomap_, btag_wp_values_) - required corrections (jec_, jer_, muon/
-// electron SFs, etc.) are intentionally NOT routed through this: a missing
-// required correction should crash loudly rather than silently produce
-// wrong physics with a fallback nobody asked for.
+// Runs a correctionlib load; on failure, logs a Warning and returns nullptr
+// instead of propagating. Only for non-essential corrections - required
+// ones (jec_, jer_, lepton SFs) should crash loudly if missing, not fall back.
 template <typename T, typename LoaderFn>
-std::shared_ptr<const T> LoadOptionalCorrection(LoaderFn&& loader, const std::string& context) {
+std::shared_ptr<const T> LoadOptionalCorrection(LoaderFn&& loader, const std::string& context, Logger& logger) {
     try {
         return loader();
     } catch (const std::exception& e) {
-        std::cerr << "[WARNING] " << context << ": " << e.what() << std::endl;
+        logger.Warning() << context << ": " << e.what() << std::endl;
         return nullptr;
     }
 }
@@ -44,10 +37,8 @@ std::string BTagAlgoToString(BTagAlgo algo) {
     switch (algo) {
         case BTagAlgo::DeepCSV:  return "DeepCSV";
         case BTagAlgo::DeepJet:  return "DeepJet";
-        // Confirmed via a real run: btagEff_UParTAK4.root's histograms are
-        // named "eff_UParTAK4_<flav>_<wp>", not "eff_UParT_..." - must be
-        // "UParTAK4" here to match both the .root filename and the
-        // histogram names inside it (see NOTES.md).
+        // Must be "UParTAK4", not "UParT" - matches btagEff_UParTAK4.root's
+        // filename and its "eff_UParTAK4_<flav>_<wp>" histogram names.
         case BTagAlgo::UParTAK4: return "UParTAK4";
         case BTagAlgo::CSVv2:    return "CSVv2";
         default:                 return "Unknown";
@@ -55,15 +46,9 @@ std::string BTagAlgoToString(BTagAlgo algo) {
 }
 
 namespace {
-// CMS-style JES full-uncertainty-set NP name -> correctionlib key, sourced
-// directly from the official JERC application tutorial's JecConfigAK4.json
-// (ApplyOnMC.JesUncertaintySet.JesUncertaintySetFull, per year) - NOT derived
-// by string-substitution into jec_name, since the per-source naming isn't
-// guaranteed to follow the same pattern as the L1FastJet/L2Relative names
-// (confirmed: Reduced-set sources get a "Regrouped_" prefix that Full-set
-// sources don't; NP names carry a year suffix, e.g. "..._2018", that the
-// correction key itself does not). Full set only for now (27 sources per
-// year) - Reduced/Total deferred per your instruction.
+// JES full-uncertainty-set NP name -> correctionlib key, from the official
+// JERC tutorial's JecConfigAK4.json (not derived by substitution - per-source
+// naming doesn't follow the L1FastJet/L2Relative pattern). Full set only.
 const std::map<std::string, std::string> kJesFullSetUnc_2016Pre = {
     {"CMS_scale_j_AbsoluteMPFBias", "Summer20UL16APVNanoV15_V1_MC_AbsoluteMPFBias_AK4PFPuppi"},
     {"CMS_scale_j_AbsoluteScale", "Summer20UL16APVNanoV15_V1_MC_AbsoluteScale_AK4PFPuppi"},
@@ -184,11 +169,8 @@ const std::map<std::string, std::string> kJesFullSetUnc_2018 = {
     {"CMS_scale_j_TimePtEta_2018", "Summer20UL18NanoV15_V1_MC_TimePtEta_AK4PFPuppi"},
 };
 
-// Resolves a CMS-style NP name (e.g. "CMS_scale_j_AbsoluteScale") to the
-// correctionlib key for the given RunPeriod, using the tables above. Empty
-// string return means "not found" - caller (constructor) treats that as a
-// hard warning + no systematic loaded, same as every other optional
-// correction in this file.
+// Resolves a CMS NP name to its correctionlib key for the given RunPeriod.
+// Empty return = not found (caller warns and skips the systematic).
 std::string LookupJesFullSetUncertaintyKey(const std::string& runPeriod, const std::string& npName) {
     const std::map<std::string, std::string>* table = nullptr;
     if (runPeriod.find("2016PreVFP") != std::string::npos) {
@@ -208,42 +190,26 @@ std::string LookupJesFullSetUncertaintyKey(const std::string& runPeriod, const s
 }  // namespace
 
 SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileName) {
-    std::cout << "TextReader in SSBCorrections ! " << std::endl;
-    std::cout << "Current directory: " << std::filesystem::current_path() << std::endl;
+    logger_.Debug() << "TextReader in SSBCorrections" << std::endl;
+    logger_.Debug() << "Current directory: " << std::filesystem::current_path() << std::endl;
     reader->PrintoutVariables();
 
 
-    // JSON correction file root, in priority order:
-    //   1. New CMS "CAT" cvmfs distribution (cms-griddata.cern.ch), organized as
-    //      <POG>/<campaign>/latest/<file>.json.gz - e.g. for NanoAODv15 Puppi
-    //      jets: JME/Run2-2018-UL-NanoAODv15/latest/jet_jerc.json.gz. This is the
-    //      one that actually has Puppi-era (AK4PFPuppi) JEC/JER corrections.
-    //   2. The older jsonpog-integration cvmfs distribution (kept for v9/PFchs
-    //      running on this same code, or if the new mount isn't available).
-    //   3. A local jsonpog-integration/ copy next to the executable, for laptops
-    //      without cvmfs.
-    // Config *Path values (JECPath, PUWeightPath, etc.) are relative to whichever
-    // root is picked here, so they need to match that root's directory layout -
-    // see the configs for the "<POG>/<campaign>/latest/<file>" paths used with
-    // the new CAT layout. NOTE: the <campaign> folder name is NOT uniform
-    // across POGs - confirmed via `ls LUM/Run*`: LUM keeps
-    // "Run2-2018-UL-NanoAODv9" even when running a v15 analysis (pileup
-    // profiles don't depend on the Jet collection), while JME needed a new
-    // "Run2-2018-UL-NanoAODv15" folder specifically for the Puppi-era
-    // corrections. Don't assume one suffix applies to every POG's path.
+    // JSON root: new CAT cvmfs > legacy jsonpog-integration cvmfs > local copy.
+    // Config *Path values are relative to whichever is picked.
     std::string jsonDir;
     const std::string catCvmfsPath  = "/cvmfs/cms-griddata.cern.ch/cat/metadata/";
     const std::string oldCvmfsPath  = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/";
     if (std::filesystem::exists(catCvmfsPath)) {
-        std::cout << "[INFO] Using new CAT CVMFS path for JSONs: " << catCvmfsPath << std::endl;
+        logger_.Info() << "Using new CAT CVMFS path for JSONs: " << catCvmfsPath << std::endl;
         jsonDir = catCvmfsPath;
     } else if (std::filesystem::exists(oldCvmfsPath)) {
-        std::cout << "[INFO] New CAT CVMFS path not found - using legacy jsonpog-integration CVMFS path: "
+        logger_.Info() << "New CAT CVMFS path not found - using legacy jsonpog-integration CVMFS path: "
                   << oldCvmfsPath << std::endl;
         jsonDir = oldCvmfsPath;
     } else {
         std::string localPath = std::filesystem::current_path().string() + "/jsonpog-integration/POG/";
-        std::cout << "[WARNING] No CVMFS JSON path found. Falling back to local path: " << localPath << std::endl;
+        logger_.Warning() << "No CVMFS JSON path found. Falling back to local path: " << localPath << std::endl;
         jsonDir = localPath;
     }
 
@@ -299,7 +265,7 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         puJson = "Collisions18_UltraLegacy_goldenJSON";
     } 
     else {
-        std::cerr << "[SSBCorrections] Unknown RunPeriod: " << RunPeriod << std::endl;
+        logger_.Error() << "Unknown RunPeriod: " << RunPeriod << std::endl;
         year_ = "2018"; // fallback or throw error
     }
 
@@ -327,27 +293,21 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
        era = "MC";  // Dummy placeholder; era is not needed for MC in most JEC logic
     }
 
-    std::cout << "era : " << era <<  std::endl;
-    std::cout << "jec_name: " << jec_name << std::endl;
-    // JetAlgoTag/JECLevel are optional config overrides; if absent, ExpandJECName
-    // falls back to its NanoAODv15 Puppi-jet defaults ("AK4PFPuppi"/"L1L2L3Res").
-    // Set JetAlgoTag="AK4PFchs" in the config to run this same code over v9/PFchs
-    // input instead.
+    logger_.Debug() << "era : " << era <<  std::endl;
+    logger_.Debug() << "jec_name: " << jec_name << std::endl;
+    // Optional overrides; default to NanoAODv15 Puppi ("AK4PFPuppi"/"L1L2L3Res").
     std::string jetAlgoTag = reader->Check("JetAlgoTag") ? reader->GetText("JetAlgoTag") : "AK4PFPuppi";
     std::string jecLevelTag = reader->Check("JECLevel") ? reader->GetText("JECLevel") : "L1L2L3Res";
-    // Keep the un-expanded base tag (e.g. "Summer20UL18NanoV15_V1") around so
-    // we can also derive the L1FastJet-only correction name below (needed as
-    // the Type-1 MET baseline - see ApplyType1METWithCorrT1) with a second
-    // ExpandJECName call using jecLevel="L1FastJet" instead - jec_name itself
-    // gets overwritten with the full L1L2L3Res-level name on the next line.
+    // Keep the un-expanded base tag to also derive the L1FastJet-only name
+    // below - jec_name gets overwritten with the full name next line.
     std::string jecBaseNameForL1 = jec_name;
     jec_name = ExpandJECName(jec_name, RunPeriod, era, is_data, jetAlgoTag, jecLevelTag);
-    std::cout << "after ExpandJECName jec_name: " << jec_name << std::endl;
+    logger_.Debug() << "after ExpandJECName jec_name: " << jec_name << std::endl;
     std::string jecL1Name = ExpandJECName(jecBaseNameForL1, RunPeriod, era, is_data, jetAlgoTag, "L1FastJet");
     
 
 
-    std::cout << "jsonDir + puw_path : " << jsonDir + puw_path << std::endl;
+    logger_.Debug() << "jsonDir + puw_path : " << jsonDir + puw_path << std::endl;
     auto puset = correction::CorrectionSet::from_file(jsonDir + puw_path);
     
     pu_weight_ = puset->at(puJson);
@@ -356,18 +316,8 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     auto jec_set = correction::CorrectionSet::from_file(jsonDir + jec_path);
     jec_ = jec_set->compound().at(jec_name);
 
-    // Detect whether this compound correction needs a 5th "run" input, by
-    // probing with dummy values. This was discovered from the CAT
-    // jet_jerc.json.gz for 2018 Puppi: the DATA compound correction
-    // ("..._V1_DATA_L1L2L3Res_AK4PFPuppi") declares 5 inputs (area, eta, pt,
-    // rho, run) and appears to resolve era-dependent behavior internally from
-    // the run number, whereas the old v9/PFchs scheme (and the v15 MC
-    // compound, "..._V1_MC_L1L2L3Res_AK4PFPuppi") only take 4 (area, eta, pt,
-    // rho) and instead bake the era into the correction *name* (see
-    // ExpandJECName's per-era "_RunA/_RunB/..." logic). Probing at startup
-    // (rather than hardcoding is_data==true implies 5 inputs) means this
-    // keeps working even if a future json goes back to the old per-era-name
-    // scheme, or some other campaign/POG does something different again.
+    // Probe whether this compound correction needs a 5th "run" input (v15
+    // Puppi DATA does; MC and old v9/PFchs bake era into the name instead).
     jec_needs_run_ = false;
     try {
         jec_->evaluate({1.0, 0.0, 30.0, 10.0});
@@ -375,11 +325,11 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         try {
             jec_->evaluate({1.0, 0.0, 30.0, 10.0, 1});
             jec_needs_run_ = true;
-            std::cout << "[INFO] JEC compound correction '" << jec_name
+            logger_.Info() << "JEC compound correction '" << jec_name
                       << "' expects a 5th 'run' input (detected automatically) - "
                       << "will pass the event run number to it." << std::endl;
         } catch (const std::exception& e2) {
-            std::cerr << "[WARNING] JEC compound correction '" << jec_name
+            logger_.Warning() << "JEC compound correction '" << jec_name
                       << "' probe failed for both the 4-input (area,eta,pt,rho) and "
                       << "5-input (+run) signatures: " << e2.what()
                       << ". JEC corrections may not evaluate correctly - check jec_name "
@@ -387,44 +337,37 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         }
     }
 
-    // L1FastJet-only correction (single, not compound) - needed as the Type-1
-    // MET baseline (see ApplyType1METWithCorrT1/GetL1CorrectedJetPt). Same
-    // file as jec_, just a plain (non-compound) correction lookup.
+    // L1FastJet-only correction - Type-1 MET baseline, same file as jec_.
     jec_l1_ = LoadOptionalCorrection<correction::Correction>(
         [&]() { return jec_set->at(jecL1Name); },
         "Could not load L1FastJet-only correction '" + jecL1Name + "' from " + jec_path +
         ". Type-1 MET recomputation will fall back to a (fullyCorrected-raw) delta instead "
         "of the CMS-recommended (fullyCorrected-L1only) one - this is a known-less-accurate "
-        "fallback, not the standard recipe.");
+        "fallback, not the standard recipe.", logger_);
 
-    // JES full-uncertainty-set systematic (2026-08) - see jes_unc_source_'s
-    // comment in the header for why this lives here instead of being
-    // threaded through as a call parameter. JESSys/JESSysDir are brand new
-    // config keys - Check() first, same as DoJES/DoJER/JERSys, so an old
-    // config without them just gets "no JES systematic" (nullptr
-    // jes_unc_source_), not a printed "Cannot find" from GetText/GetBool.
-    // "nominal"/empty JESSys is the normal case (no systematic pass).
+    // JESSys/JESSysDir are new config keys; Check() first so an old config
+    // without them just gets "no JES systematic" instead of a GetText/GetBool error.
     {
         std::string jesSys = reader->Check("JESSys") ? reader->GetText("JESSys") : "nominal";
         jes_sys_dir_ = reader->Check("JESSysDir") ? reader->GetText("JESSysDir") : "up";
         if (jesSys != "nominal" && !jesSys.empty()) {
             std::string uncKey = LookupJesFullSetUncertaintyKey(RunPeriod, jesSys);
             if (uncKey.empty()) {
-                std::cerr << "[WARNING] JESSys=\"" << jesSys << "\" not found in the Full-set "
+                logger_.Warning() << "JESSys=\"" << jesSys << "\" not found in the Full-set "
                           << "NP-name table for RunPeriod=\"" << RunPeriod << "\" (see "
                           << "LookupJesFullSetUncertaintyKey in this file) - no JES systematic "
                           << "will be applied. Check spelling (e.g. \"CMS_scale_j_AbsoluteScale\") "
                           << "and that this RunPeriod has a Full-set table." << std::endl;
             } else if (jes_sys_dir_ != "up" && jes_sys_dir_ != "down") {
-                std::cerr << "[WARNING] JESSysDir=\"" << jes_sys_dir_ << "\" is not \"up\" or "
+                logger_.Warning() << "JESSysDir=\"" << jes_sys_dir_ << "\" is not \"up\" or "
                           << "\"down\" - no JES systematic will be applied." << std::endl;
             } else {
                 jes_unc_source_ = LoadOptionalCorrection<correction::Correction>(
                     [&]() { return jec_set->at(uncKey); },
                     "Could not load JES uncertainty-source correction '" + uncKey +
-                    "' (JESSys=" + jesSys + ") from " + jec_path + ". No JES systematic will be applied.");
+                    "' (JESSys=" + jesSys + ") from " + jec_path + ". No JES systematic will be applied.", logger_);
                 if (jes_unc_source_) {
-                    std::cout << "[INFO] Loaded JES uncertainty source '" << uncKey
+                    logger_.Info() << "Loaded JES uncertainty source '" << uncKey
                               << "' for JESSys=" << jesSys << " JESSysDir=" << jes_sys_dir_
                               << " - applying to GetCorrectedJetPt() (physics jets + Type-1 MET)."
                               << std::endl;
@@ -439,13 +382,8 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     auto jer_sf_set = correction::CorrectionSet::from_file(jsonDir + jer_sf_path);
     jer_sf_ = jer_sf_set->at(jer_name);
 
-    // JER SF uncertainty - confirmed (by directly inspecting jet_jerc.json.gz)
-    // to be a SEPARATE correction from jer_sf_ itself, not a "systematic"
-    // input to it (jer_sf_'s own schema is evaluate({eta, pt}), no
-    // string/tag input at all) - the CMS JERC tutorial combines them as
-    // sf*(1 +/- sfUnc) for up/down. Optional: some campaigns may not publish
-    // this correction, in which case up/down variations just aren't
-    // available (SmearJER only uses "nominal" today regardless).
+    // JER SF uncertainty is a separate correction from jer_sf_ (not a tag
+    // input to it); combined as sf*(1+-sfUnc). Optional - some campaigns don't publish it.
     std::string jerSfUncName = jer_name;
     {
         size_t pos = jerSfUncName.find("ScaleFactor");
@@ -456,16 +394,10 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     jer_sfunc_ = LoadOptionalCorrection<correction::Correction>(
         [&]() { return jer_sf_set->at(jerSfUncName); },
         "Could not load JER SF uncertainty correction (derived from JERName by replacing "
-        "'ScaleFactor' with 'SFUncertainty'). JER SF up/down variations will not be available.");
+        "'ScaleFactor' with 'SFUncertainty'). JER SF up/down variations will not be available.", logger_);
 
-    // CMS JME's official "JERSmear" correctionlib tool (jer_smear.json.gz) -
-    // does the hybrid-method/stochastic JER smearing decision and the actual
-    // random smearing internally (a `hashprng` node keyed off EventID etc.),
-    // per the CMS JERC ApplicationTutorial. Path/name are config-driven since
-    // this is commonly a separate file from jet_jerc.json.gz. If either key
-    // is missing from the config or the file/correction can't be loaded,
-    // SmearJER() falls back to an in-house TRandom3-based implementation
-    // (see there) - functional, but not the officially recommended approach.
+    // CMS's official JERSmear tool, usually a separate file from
+    // jet_jerc.json.gz; SmearJER() falls back in-house if unavailable.
     std::string jerSmearPath = reader->Check("JERSmearPath") ? reader->GetText("JERSmearPath") : "";
     std::string jerSmearName = reader->Check("JERSmearName") ? reader->GetText("JERSmearName") : "JERSmear";
     if (!jerSmearPath.empty()) {
@@ -475,32 +407,20 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
                 return jerSmearSet->at(jerSmearName);
             },
             "Could not load JERSmearPath=" + jerSmearPath +
-            ". Falling back to an in-house JER smearing implementation.");
+            ". Falling back to an in-house JER smearing implementation.", logger_);
         if (jer_smear_) {
-            std::cout << "[INFO] Loaded JER smearing tool '" << jerSmearName << "' from "
+            logger_.Info() << "Loaded JER smearing tool '" << jerSmearName << "' from "
                       << jerSmearPath << " - using it for JER smearing (CMS-recommended)." << std::endl;
         }
     } else {
-        std::cerr << "[WARNING] JERSmearPath not set in config - falling back to an in-house "
+        logger_.Warning() << "JERSmearPath not set in config - falling back to an in-house "
                   << "JER smearing implementation instead of CMS's official JERSmear tool. "
                   << "Set JERSmearPath (e.g. 'JME/Run2-2018-UL-NanoAODv15/latest/jer_smear.json.gz') "
                   << "to use the recommended approach." << std::endl;
         jer_smear_ = nullptr;
     }
 
-    // JMAR (PU jet ID SF) - was NOT wrapped in try/catch, unlike every other
-    // optional correction load in this constructor (jec_l1_, jer_sfunc_,
-    // jer_smear_, jetvetomap_ below). correction::CorrectionSet::from_file()
-    // throws std::runtime_error if the file doesn't exist, and with no
-    // try/catch that propagates all the way out of the constructor uncaught -
-    // std::terminate()/abort(), crashing the whole job, instead of a graceful
-    // [WARNING] + fallback like everything else here. GetPUJetIDSFAndEff()
-    // already null-checks pujetid_sf_ and returns 1.0 (no PU-ID reweighting)
-    // if it's not loaded, so there was already a safe fallback available -
-    // this constructor just never used it. Found from a real run where
-    // jmar.json.gz didn't exist at the expected CAT cvmfs path (2018 UL JMAR
-    // apparently doesn't have a NanoAODv15 folder there, or is named/located
-    // differently - worth an `ls` on your cvmfs to confirm the real path).
+    // JMAR (PU jet ID SF) - optional; GetPUJetIDSFAndEff() returns 1.0 if unloaded.
     pujetid_sf_ = LoadOptionalCorrection<correction::Correction>(
         [&]() {
             auto jmar_sf_set = correction::CorrectionSet::from_file(jsonDir + jmar_path);
@@ -508,9 +428,9 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         },
         "Could not load JMARPath=" + jmar_path +
         ". PU jet ID SF will be unavailable (GetPUJetIDSFAndEff() returns 1.0 - no PU-ID "
-        "reweighting applied).");
+        "reweighting applied).", logger_);
     if (pujetid_sf_) {
-        std::cout << "[INFO] Loaded PU jet ID SF from " << jmar_path << std::endl;
+        logger_.Info() << "Loaded PU jet ID SF from " << jmar_path << std::endl;
     }
 
     jveto_name_ = jveto_name;
@@ -523,28 +443,28 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
                 auto jetveto_set = correction::CorrectionSet::from_file(jsonDir + jveto_path);
                 return jetveto_set->at(jveto_name);
             },
-            "Failed to load jet veto map");
+            "Failed to load jet veto map", logger_);
         if (jetvetomap_) {
-            std::cout << "[INFO] Loaded jet veto map: " << jveto_name
+            logger_.Info() << "Loaded jet veto map: " << jveto_name
                       << " with key: " << jveto_map_key
                       << " type: " << jveto_type << std::endl;
         }
     } else {
-       std::cout << "[INFO] Jet veto map not configured, skipping..." << std::endl;
+       logger_.Info() << "Jet veto map not configured, skipping..." << std::endl;
        jetvetomap_ = nullptr;
     }
 
     if (btag_sf_type_ != "comb" && btag_sf_type_ != "mujets") {
-        std::cerr << "[WARNING] Invalid BTagSFType: " << btag_sf_type_ 
+        logger_.Warning() << "Invalid BTagSFType: " << btag_sf_type_
                   << ". Using default 'comb'." << std::endl;
         btag_sf_type_ = "comb";
     }
 
     // Analysis type specific recommendation
     if (btag_sf_type_ == "comb") {
-        std::cout << "[INFO] Using 'comb' SF (QCD + ttbar enriched regions)" << std::endl;
+        logger_.Info() << "Using 'comb' SF (QCD + ttbar enriched regions)" << std::endl;
     } else {
-        std::cout << "[INFO] Using 'mujets' SF (QCD enriched regions, bias avoidance)" << std::endl;
+        logger_.Info() << "Using 'mujets' SF (QCD enriched regions, bias avoidance)" << std::endl;
     }
 
 
@@ -553,7 +473,7 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     // sync the way they did once before (see NOTES.md).
     BTagAlgo btag_algo_kind = ParseBTagAlgo(jet_btag_conf);
     if (btag_algo_kind == BTagAlgo::Unknown) {
-        std::cerr << "[WARNING] Unknown b-tag algorithm in Jet_btag: " << jet_btag_conf << std::endl;
+        logger_.Warning() << "Unknown b-tag algorithm in Jet_btag: " << jet_btag_conf << std::endl;
     }
     std::string btag_algo = BTagAlgoToString(btag_algo_kind);
     std::string btag_wp = "";
@@ -563,15 +483,11 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     else if (last == 'M' || last == 'm') btag_wp = "Medium";
     else if (last == 'T' || last == 't') btag_wp = "Tight";
     else {
-        std::cerr << "[WARNING] Unknown WP in Jet_btag: " << jet_btag_conf << std::endl;
+        logger_.Warning() << "Unknown WP in Jet_btag: " << jet_btag_conf << std::endl;
     }
 
-    // Path scheme: config BTagSFJsonPath overrides everything (safest, since the
-    // new CAT cvmfs layout for BTV hasn't been directly confirmed - only JME's
-    // "Run2-<year>-UL-NanoAODv15/latest/" convention was confirmed from the
-    // user's cvmfs listing). Otherwise, guess the same campaign-folder scheme
-    // JME uses when running against the new CAT jsonDir, and fall back to the
-    // legacy "<year>_UL/" scheme for the old jsonpog-integration path.
+    // BTagSFJsonPath config override takes priority; else guess the CAT or
+    // legacy jsonpog-integration path scheme from jsonDir.
     std::string btag_sf_json;
     if (reader->Check("BTagSFJsonPath")) {
         btag_sf_json = reader->GetText("BTagSFJsonPath");
@@ -581,32 +497,18 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
         btag_sf_json = "BTV/" + year_ + "_UL/btagging.json.gz";
     }
 
-    // correctionlib correction-name string for the b-tag SF, keyed off btag_sf_type_
-    // ("comb"/"mujets" - only meaningful for DeepJet/DeepCSV in the CMS BTV scheme).
-    // UParT's correction name in btagging.json.gz is NOT verified here - it may not
-    // even follow the "<tagger>_<sftype>" pattern used by DeepJet/DeepCSV. Override
-    // via config key BTagTaggerName if "particleTransformerAK4_<btag_sf_type_>" turns
-    // out to be wrong; check with:
-    //   python3 -c "import correctionlib; print(list(correctionlib.CorrectionSet.from_file('btagging.json.gz')))"
+    // UParT's tagger name isn't verified against btagging.json.gz; override via
+    // config key BTagTaggerName if the guessed name is wrong.
     std::string btag_tagger;
     if (reader->Check("BTagTaggerName")) {
         btag_tagger = reader->GetText("BTagTaggerName");
     } else if (btag_algo_kind == BTagAlgo::DeepJet) {
         btag_tagger = "deepJet_" + btag_sf_type_;
     } else if (btag_algo_kind == BTagAlgo::UParTAK4) {
-        // Confirmed from the user's actual btagging.json.gz: the corrections
-        // are named "UParTAK4_comb" (b/c-jet SF) and "UParTAK4_light"
-        // (light-jet SF) - NOT "particleTransformerAK4_<type>" as originally
-        // guessed. Also unlike DeepJet/DeepCSV, UParT only ships a single
-        // "comb"-type heavy-flavor SF (no separate "..._mujets" correction),
-        // per its description: "Should not be used by ttbar measurements
-        // with large overlap of SF derivation phase spaces (emu, >=2j and
-        // e/mu==4j)" - i.e. CMS BTV's own docs flag exactly this dilepton
-        // ttbar analysis as a case to be careful with when using 'comb'.
-        // BTagSFType is therefore not applied to the tagger name here (see
-        // InitBtagSFCorrection, which special-cases the UParTAK4_* naming).
+        // UParT only ships a single "comb" heavy-flavor SF ("UParTAK4_comb",
+        // no "_mujets" variant) - BTagSFType has no effect on the tagger name here.
         if (btag_sf_type_ != "comb") {
-            std::cout << "[INFO] btag_algo=UParT: BTagSFType='" << btag_sf_type_
+            logger_.Info() << "btag_algo=UParT: BTagSFType='" << btag_sf_type_
                       << "' has no effect - your btagging.json.gz only provides a 'comb' "
                       << "b/c-jet SF for UParTAK4 (no 'mujets' variant exists)." << std::endl;
         }
@@ -617,14 +519,10 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     std::string btag_eff_path = "";
     if (!is_data) {
         std::string process_subdir = GetProcessSubDir(inputfileName);
-        // btag_algo is now "UParTAK4" directly (see above) - matches both
-        // the .root filename (btagEff_UParTAK4.root) and, confirmed by a
-        // real run, the in-file histogram name prefix (eff_UParTAK4_b_...).
-        // No separate filename-only variable needed anymore.
         btag_eff_path = "CorrectionFiles/BTag/UL" + RunPeriod
                       + "/" + process_subdir
                       + "/btagEff_" + btag_algo + ".root";
-        std::cout << "[INFO] btag_eff_path: " << btag_eff_path << std::endl;
+        logger_.Info() << "btag_eff_path: " << btag_eff_path << std::endl;
     }
 
     InitBtagSFCorrection(jsonDir + btag_sf_json, btag_tagger);
@@ -637,129 +535,67 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
 
     // Load muon SF
     //auto muon_set = CorrectionSet::from_file(jsonDir+muon_path);
-    std::cout << "jsonDir+muon_path " << jsonDir+muon_path << std::endl; 
+    logger_.Debug() << "jsonDir+muon_path " << jsonDir+muon_path << std::endl;
     auto muon_set = correction::CorrectionSet::from_file(jsonDir + muon_path);
 
-    std::cout << "muon_id_corName : " << muon_id_corName << std::endl;
-    std::cout << "muon_iso_corName : " << muon_iso_corName << std::endl;
+    logger_.Debug() << "muon_id_corName : " << muon_id_corName << std::endl;
+    logger_.Debug() << "muon_iso_corName : " << muon_iso_corName << std::endl;
 
     muon_id_   = muon_set->at(muon_id_corName);
     muon_iso_  = muon_set->at(muon_iso_corName);
 
     auto cset = correction::CorrectionSet::from_file(jsonDir + elec_path);
-    //std::cout << "sk ele 1 ele_sf_name_ : " << ele_sf_name_ << std::endl;
     ele_sf_ = cset->at(ele_sf_name_);
-    //std::cout << "sk ele 2 ele_reco_sf_name_: " << ele_reco_sf_name_ << std::endl;
     std::string TrigSFPath = std::filesystem::current_path().string() + "/CorrectionFiles/Trig/";
-    TFile *f_trg     = new TFile((TrigSFPath+Trig_sf_name_).c_str());
-    H_trig = (TH2D*) f_trg->Get(Trig_sf_histname_.c_str());
+    {
+        std::unique_ptr<TFile> f_trg(TFile::Open((TrigSFPath + Trig_sf_name_).c_str()));
+        if (!f_trg || f_trg->IsZombie()) {
+            throw std::runtime_error("SSBCorrections: could not open trigger SF file: " + TrigSFPath + Trig_sf_name_);
+        }
+        auto* h = dynamic_cast<TH2*>(f_trg->Get(Trig_sf_histname_.c_str()));
+        if (!h) {
+            throw std::runtime_error("SSBCorrections: trigger SF histogram '" + Trig_sf_histname_ +
+                                      "' not found (or not a TH2-derived type) in " + TrigSFPath + Trig_sf_name_);
+        }
+        H_trig.reset(static_cast<TH2*>(h->Clone()));
+        H_trig->SetDirectory(nullptr);  // detach from f_trg's TDirectory before f_trg closes below
+    }
 
-    /// Muon Rochester correction ///
     std::string rochesterCorrFile;
-    std::cout << "RunPeriod : " << RunPeriod << std::endl;
+    logger_.Debug() << "RunPeriod : " << RunPeriod << std::endl;
     if (RunPeriod.find("2016Pre")  != std::string::npos) {    rochesterCorrFile =  "./CorrectionFiles/Rochester/RoccoR2016aUL.txt";}
     else if (RunPeriod.find("2016Post") != std::string::npos) { rochesterCorrFile =  "./CorrectionFiles/Rochester/RoccoR2016bUL.txt";}
     else if (RunPeriod.find("2017")     != std::string::npos) { rochesterCorrFile =  "./CorrectionFiles/Rochester/RoccoR2017UL.txt";}
     else if (RunPeriod.find("2018")     != std::string::npos) { rochesterCorrFile =  "./CorrectionFiles/Rochester/RoccoR2018UL.txt";}
     else {
-        std::cerr << "[SSBCorrections] Unknown RunPeriod in rochesterCorrFile : " << RunPeriod << std::endl;
+        logger_.Error() << "Unknown RunPeriod in rochesterCorrFile : " << RunPeriod << std::endl;
     }
 
-    std::cout << "[Debug!!] in SSBCorrections !! rochesterCorrFile  : " << rochesterCorrFile<< std::endl;
+    logger_.Debug() << "rochesterCorrFile : " << rochesterCorrFile << std::endl;
     std::ifstream file(rochesterCorrFile);
     if(!file.good()){
-            std::cerr << "ERROR:  Rochester file is not found:" << rochesterCorrFile << std::endl;
-            std::exit(1);
+            logger_.Error() << "Rochester file is not found: " << rochesterCorrFile << std::endl;
+            throw std::runtime_error("SSBCorrections: Rochester correction file not found: " + rochesterCorrFile);
     }
 
     rc.init(rochesterCorrFile);
 }
 
-// Destructor ///
-//
 SSBCorrections::~SSBCorrections() {
-    std::cout << "[SSBCorrections] Destructor called - cleaning up memory..." << std::endl;
-    
-    // 1. Safely delete H_trig histogram
-    if (H_trig) {
-        std::cout << "[SSBCorrections] Deleting H_trig histogram..." << std::endl;
-        delete H_trig;
-        H_trig = nullptr;
-    }
-    
-    // 2. Safely delete all TH2D pointers in eff_histograms_ map
-    std::cout << "[SSBCorrections] Cleaning up " << eff_histograms_.size() 
+    // H_trig and eff_histograms_ are unique_ptr-owned - cleaned up
+    // automatically, nothing to do here manually.
+    logger_.Info() << "Destructor called - cleaning up " << eff_histograms_.size()
               << " efficiency histograms..." << std::endl;
-              
-    for (auto& pair : eff_histograms_) {
-        if (pair.second) {
-            std::cout << "[SSBCorrections] Deleting histogram: " << pair.first << std::endl;
-            delete pair.second;
-            pair.second = nullptr;
-        }
-    }
-    
-    // Clear the map itself
-    eff_histograms_.clear();
-    
-    std::cout << "[SSBCorrections] Destructor completed successfully." << std::endl;
 }
-/*
-SSBCorrections::~SSBCorrections() {
-    std::cout << "[SSBCorrections] Destructor called - cleaning up memory..." << std::endl;
-
-    if (H_trig) {
-        // Check if ROOT object is still valid
-        if (gROOT && gROOT->FindObject(H_trig)) {
-            std::cout << "[SSBCorrections] Deleting H_trig histogram..." << std::endl;
-            delete H_trig;
-        }
-        H_trig = nullptr;
-    }
-
-    std::cout << "[SSBCorrections] Cleaning up " << eff_histograms_.size()
-              << " efficiency histograms..." << std::endl;
-
-    for (auto& pair : eff_histograms_) {
-        if (pair.second) {
-            // Check if ROOT object is still valid
-            if (gROOT && gROOT->FindObject(pair.second)) {
-                std::cout << "[SSBCorrections] Deleting histogram: " << pair.first << std::endl;
-                delete pair.second;
-            }
-            pair.second = nullptr;
-        }
-    }
-
-    // Clear the map itself
-    eff_histograms_.clear();
-
-    std::cout << "[SSBCorrections] Destructor completed successfully." << std::endl;
-}
-*/
 
 double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area, double rho, unsigned int run_number) const {
-    //std::cout << "in GetCorrectedJetPt raw_pt : " << raw_pt
-    //          << " eta " << eta << " area : " << area << " rho : " << rho << std::endl;
-
     double sf = jec_needs_run_
         ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<int>(run_number)})
         : jec_->evaluate({area, eta, raw_pt, rho});
-    //std::cout << "sf in GetCorrectedJetPt : " << sf << std::endl;
-
     double corrected_pt = raw_pt * sf;
 
-    // JES full-uncertainty-set systematic (2026-08) - applied here, after
-    // nominal JEC, matching the CMS JERC tutorial's Applier::jesComponentSyst:
-    // evaluate({eta, ptAfterJes}) -> a fractional "scale", combined as
-    // pt*(1+scale) for up / pt*(1-scale) for down. Living inside this one
-    // function means every caller of GetCorrectedJetPt() (physics jets in
-    // ApplyJetCorrections(), and both jet loops in
-    // ApplyType1METWithCorrT1()'s Type-1 MET calculation) picks up the same
-    // shift automatically and consistently, without each call site needing
-    // its own systematic-threading logic - see jes_unc_source_'s comment in
-    // the header. No-op (factor 1.0) when no JES systematic was requested
-    // (jes_unc_source_ is nullptr in that case, the default/nominal path).
+    // JES full-uncertainty-set shift, applied after nominal JEC so every
+    // caller of GetCorrectedJetPt() picks it up consistently. No-op if unset.
     if (jes_unc_source_) {
         double scale = jes_unc_source_->evaluate({eta, corrected_pt});
         double factor = (jes_sys_dir_ == "up") ? (1.0 + scale) : (1.0 - scale);
@@ -771,10 +607,7 @@ double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area,
 
 double SSBCorrections::GetL1CorrectedJetPt(double raw_pt, double eta, double area, double rho) const {
     if (!jec_l1_) {
-        // No L1-only correction loaded (see constructor warning) - returning
-        // raw_pt here makes ApplyType1METWithCorrT1's (corrected-L1only)
-        // delta fall back to (corrected-raw), i.e. the old/less-accurate
-        // behavior, rather than silently producing a wrong number some other way.
+        // Not loaded - fall back to the less-accurate (corrected-raw) delta.
         return raw_pt;
     }
     double c1 = jec_l1_->evaluate({area, eta, raw_pt, rho});
@@ -794,39 +627,25 @@ double SSBCorrections::GetJER(double eta, double pt, double rho) const {
 }
 
 namespace {
-// Deterministic per-(event, jet) seed for JER stochastic smearing, so that:
-//  (a) results are reproducible across job re-runs/resubmissions, and
-//  (b) if JER-up/down systematic passes are added later, they can reuse the
-//      exact same random draw per jet (only the resolution/SF value differs
-//      between nominal/up/down), which is the standard way to isolate the
-//      systematic from jet-to-jet statistical fluctuation.
-// This mixes the event number with the jet's eta/phi (scaled to integers) so
-// different jets in the same event get different but reproducible seeds.
-// NOTE: this is a reasonable in-house deterministic scheme, not necessarily
-// bit-identical to CMSSW/nanoAOD-tools' internal JER smearer seed formula -
-// if bit-exact reproducibility with an existing official recipe is required,
-// substitute that exact formula here instead.
+// Deterministic per-(event, jet) seed for JER smearing - reproducible across
+// re-runs, and reusable for up/down passes to isolate the systematic from
+// jet-to-jet statistical fluctuation. Not bit-identical to any official recipe.
 UInt_t ComputeJerSeed(ULong64_t event, double eta, double phi) {
     ULong64_t etaBits = static_cast<ULong64_t>(std::llround(eta * 1.0e4));
     ULong64_t phiBits = static_cast<ULong64_t>(std::llround(phi * 1.0e4));
     ULong64_t mixed = (event * 2654435761ULL)
                      ^ (etaBits * 40503ULL)
                      ^ (phiBits * 2246822519ULL);
-    // Avoid seed 0 (TRandom3 treats 0 as "seed from clock/entropy", which
-    // would defeat determinism).
     UInt_t seed = static_cast<UInt_t>(mixed & 0xFFFFFFFFULL);
-    return seed == 0 ? 1u : seed;
+    return seed == 0 ? 1u : seed;  // 0 means "seed from entropy" to TRandom3
 }
 }
 
 double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double gen_eta, double gen_phi,
                                  double eta, double phi, double rho,
                                  ULong64_t event, const std::string& jer_tag) const {
-    // jer_sf_/jer_sfunc_ evaluate({eta, pt}) - confirmed by directly
-    // inspecting jet_jerc.json.gz: this is a plain 2-real-input schema, NOT
-    // {eta, systematic_string} as originally assumed here. Up/down variations
-    // come from a SEPARATE SFUncertainty correction, combined arithmetically
-    // (sf*(1+-unc)) - matches the CMS JERC tutorial's Applier::jerFactor.
+    // jer_sf_ is a plain 2-input (eta, pt) schema; up/down comes from the
+    // separate jer_sfunc_ correction, combined as sf*(1+-unc).
     double sf = jer_sf_->evaluate({eta, reco_pt});
     if (jer_sfunc_ && jer_tag != "nominal") {
         double sfUnc = jer_sfunc_->evaluate({eta, reco_pt});
@@ -835,15 +654,8 @@ double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double gen_eta, d
     }
     double resolution = jer_->evaluate({eta, reco_pt, rho});
 
-    // Gen-match re-validation (2026-08 fix, confirmed against the tutorial's
-    // Applier::jerFactor): a caller-supplied gen_pt is only trusted if it
-    // ALSO satisfies dR(jet, gen) < 0.2 AND |reco_pt - gen_pt| <
-    // 3*resolution*reco_pt. Both conditions are checked here, uniformly,
-    // BEFORE either smearing path below runs - the official JERSmear
-    // correctionlib tool's evaluate() schema (JetPt, JetEta, GenPt, Rho,
-    // EventID, JER, JERSF) has no room for gen eta/phi, so it cannot verify
-    // the dR condition itself; the tutorial does both checks in the caller,
-    // never inside the tool, and this matches that exactly.
+    // Re-validate the gen match: dR<0.2 AND |reco_pt-gen_pt|<3*resolution*reco_pt,
+    // checked here since JERSmear's evaluate() schema has no room for gen eta/phi.
     bool matched = false;
     if (gen_pt >= 0.0) {
         TLorentzVector jetDir, genDir;
@@ -855,22 +667,15 @@ double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double gen_eta, d
     double genPtForSmear = matched ? gen_pt : -1.0;
 
     if (jer_smear_) {
-        // CMS's official "JERSmear" correctionlib tool - handles the actual
-        // random smearing internally via a deterministic `hashprng` node.
-        // Input order per the CMS JERC ApplicationTutorial's
-        // Applier::jerFactor: JetPt, JetEta, GenPt (-1 if no match, already
-        // validated above), Rho, EventID, JER (resolution), JERSF.
+        // CMS's official JERSmear tool - deterministic hashprng-based smearing.
         double smear = jer_smear_->evaluate({reco_pt, eta, genPtForSmear, rho,
                                               static_cast<int>(event), resolution, sf});
         double corr = (std::isfinite(smear) && smear > 0.0) ? smear : 1.0;
         return std::max(0.0, reco_pt * corr);
     }
 
-    // Fallback (jer_smear_ not loaded - see constructor warning): an in-house
-    // reimplementation of the same hybrid method. Not the officially
-    // recommended approach (no access to correctionlib's own hashprng
-    // internals), but functional and deterministic via a local per-(event,
-    // jet) seeded TRandom3 rather than the shared global gRandom.
+    // Fallback if jer_smear_ isn't loaded: in-house hybrid method, deterministic
+    // via a per-(event,jet) seeded TRandom3.
     if (matched) {
         double delta_pt = reco_pt - genPtForSmear;
         double smeared_pt = genPtForSmear + sf * delta_pt;
@@ -888,7 +693,7 @@ double SSBCorrections::SmearJER(double reco_pt, double gen_pt, double gen_eta, d
 
 float SSBCorrections::GetPUJetIDSFAndEff(float pt, float eta, bool passPU, bool genMatched, const std::string& wp, const std::string& syst, bool getEff) const {
     if (!pujetid_sf_) {
-        std::cerr << "[SSBCorrections::GetPUJetIDSFAndEff] PUJetID correction not loaded." << std::endl;
+        logger_.Error() << "[GetPUJetIDSFAndEff] PUJetID correction not loaded." << std::endl;
         return 1.0;
     }
     
@@ -899,27 +704,23 @@ float SSBCorrections::GetPUJetIDSFAndEff(float pt, float eta, bool passPU, bool 
         std::variant<double, std::vector<double>> val = pujetid_sf_->evaluate({eta, pt, eval_type, wp});
         return std::get<double>(val);
     } catch (const std::exception& e) {
-        std::cerr << "[SSBCorrections::GetPUJetIDSFAndEff] Evaluation failed: " << e.what() << std::endl;
+        logger_.Error() << "[GetPUJetIDSFAndEff] Evaluation failed: " << e.what() << std::endl;
         return 1.0;
     }
 }
 
 
 double SSBCorrections::GetMuonRecoSF(double pt, double eta) const {
-    //auto val = muon_reco_->evaluate({pt, eta});
     std::variant<double, std::vector<double>> val = muon_reco_->evaluate({pt, eta});
-    //return std::get<double>(val);
     return std::get<double>(val);
 }
 
 double SSBCorrections::GetMuonIDSF(double pt, double eta, const std::string& syst_tag) const {
-    //auto val = muon_id_->evaluate({eta, pt, syst_tag});
     std::variant<double, std::vector<double>> val = muon_id_->evaluate({eta, pt, syst_tag});
     return std::get<double>(val);
 }
 
 double SSBCorrections::GetMuonIsoSF(double pt, double eta, const std::string& syst_tag) const {
-    //auto val = muon_iso_->evaluate({eta, pt, syst_tag});
     std::variant<double, std::vector<double>> val = muon_iso_->evaluate({eta, pt, syst_tag});
     return std::get<double>(val);
 }
@@ -932,9 +733,6 @@ double SSBCorrections::DoubleMuon_IDIsoEff(TLorentzVector lep1, TLorentzVector l
     float abseta1 = std::abs(lep1.Eta());
     float abseta2 = std::abs(lep2.Eta());
 
-    //std::cout << "muidsys : " << muidsys << std::endl;
-    //std::cout << "muisosys : " << muisosys << std::endl;
-
     std::string IDSyst = "nominal", IsoSyst = "nominal";
 
     if (muidsys.Contains("up", TString::kIgnoreCase)) IDSyst = "up";
@@ -942,9 +740,7 @@ double SSBCorrections::DoubleMuon_IDIsoEff(TLorentzVector lep1, TLorentzVector l
 
     if (muisosys.Contains("up", TString::kIgnoreCase)) IsoSyst = "up";
     else if (muisosys.Contains("down", TString::kIgnoreCase)) IsoSyst = "down";
-    //std::cout << "IDSyst : " << IDSyst << std::endl;
     double mu1id  = GetMuonIDSF(pt1, abseta1, IDSyst);
-    //std::cout << "After mu1id  " << mu1id << std::endl;
     double mu2id  = GetMuonIDSF(pt2, abseta2, IDSyst);
     double mu1iso = GetMuonIsoSF(pt1, abseta1, IsoSyst);
     double mu2iso = GetMuonIsoSF(pt2, abseta2, IsoSyst);
@@ -972,22 +768,16 @@ double SSBCorrections::DoubleElec_Eff(
     const std::string& reco_syst     // "nominal", "up", "down"
 ) const {
     
-    // Step 1: Apply pt/eta limits based on JSON ranges
-    // pT range in JSON: 10.0 to Infinity, but clamp very high values
+    // Clamp to the JSON's valid pt/eta ranges.
     float lep1pt = std::clamp(static_cast<float>(lep1.Pt()), 10.0f, 999.0f);
     float lep2pt = std::clamp(static_cast<float>(lep2.Pt()), 10.0f, 999.0f);
-    
-    // Eta range in JSON: -Infinity to +Infinity, but avoid extreme values  
-    // Keep within reasonable detector range
     float lep1sueta_clamped = std::clamp(static_cast<float>(ele1sueta), -3.0f, 3.0f);
     float lep2sueta_clamped = std::clamp(static_cast<float>(ele2sueta), -3.0f, 3.0f);
-    
-    // Step 2: Calculate ID SF for each electron using GetElectronSF
-    // Check if id_wp is empty and set default
+
     std::string actual_id_wp = id_wp;
     if (actual_id_wp.empty()) {
         actual_id_wp = "Tight";  // Set default working point
-        std::cout << "[WARNING] Empty ID working point, using default: " << actual_id_wp << std::endl;
+        logger_.Warning() << "Empty ID working point, using default: " << actual_id_wp << std::endl;
     }
     
     // Use working point directly (not with "ID" prefix)
@@ -1007,16 +797,6 @@ double SSBCorrections::DoubleElec_Eff(
     double doubleEleff = static_cast<double>(ele1id) * static_cast<double>(ele2id) * 
                         static_cast<double>(ele1iso) * static_cast<double>(ele2iso) * 
                         static_cast<double>(ele1reco) * static_cast<double>(ele2reco);
-    
-    // Debug output (can be removed in production)
-    /*
-    std::cout << "[DoubleElec_Eff] Debug info:" << std::endl;
-    std::cout << "  Ele1: pt=" << lep1pt << ", eta=" << lep1sueta_clamped 
-              << ", ID_SF=" << ele1id << ", Reco_SF=" << ele1reco << std::endl;
-    std::cout << "  Ele2: pt=" << lep2pt << ", eta=" << lep2sueta_clamped 
-              << ", ID_SF=" << ele2id << ", Reco_SF=" << ele2reco << std::endl;
-    std::cout << "  Total efficiency: " << doubleEleff << std::endl;
-    */ 
     
     return doubleEleff;
 }
@@ -1051,7 +831,7 @@ double SSBCorrections::MuonElec_Eff(const TLorentzVector& muon, const TLorentzVe
     std::string actual_ele_id_wp = ele_id_wp;
     if (actual_ele_id_wp.empty()) {
         actual_ele_id_wp = "Tight";  // Set default working point
-        std::cout << "[WARNING] Empty electron ID working point, using default: " << actual_ele_id_wp << std::endl;
+        logger_.Warning() << "Empty electron ID working point, using default: " << actual_ele_id_wp << std::endl;
     }
     
     float ele_id = GetElectronSF(actual_ele_id_wp, electron_sueta_clamped, electron_pt, ele_id_syst);
@@ -1067,16 +847,6 @@ double SSBCorrections::MuonElec_Eff(const TLorentzVector& muon, const TLorentzVe
     double muonelec_eff = static_cast<double>(mu_id) * static_cast<double>(mu_iso) * 
                          static_cast<double>(mu_trk) * static_cast<double>(ele_id) * 
                          static_cast<double>(ele_iso) * static_cast<double>(ele_reco);
-
-    // Debug output (can be removed in production)
-    /*
-    std::cout << "[MuonElec_Eff] Debug info:" << std::endl;
-    std::cout << "  Muon: pt=" << muon_pt << ", abseta=" << muon_abseta 
-              << ", ID_SF=" << mu_id << ", Iso_SF=" << mu_iso << ", Trk_SF=" << mu_trk << std::endl;
-    std::cout << "  Electron: pt=" << electron_pt << ", sueta=" << electron_sueta_clamped 
-              << ", ID_SF=" << ele_id << ", Reco_SF=" << ele_reco << ", Iso_SF=" << ele_iso << std::endl;
-    std::cout << "  Total efficiency: " << muonelec_eff << std::endl;
-    */
 
     return muonelec_eff;
 }
@@ -1097,7 +867,7 @@ float SSBCorrections::GetElectronSF(const std::string& sf_type, float eta, float
         valtype = "sf";
     } else {
         // Handle unknown systematic values
-        std::cerr << "[WARNING] Unknown systematic: '" << syst << "', using nominal (sf)" << std::endl;
+        logger_.Warning() << "Unknown systematic: '" << syst << "', using nominal (sf)" << std::endl;
         valtype = "sf";
     }
 
@@ -1112,7 +882,7 @@ float SSBCorrections::GetElectronSF(const std::string& sf_type, float eta, float
         else if (sf_type == "SCBMedium") working_point = "Medium";
         else if (sf_type == "SCBTight") working_point = "Tight";
         else {
-            std::cerr << "[WARNING] Unknown SCB working point: " << sf_type << ", using Tight" << std::endl;
+            logger_.Warning() << "Unknown SCB working point: " << sf_type << ", using Tight" << std::endl;
             working_point = "Tight";
         }
     } else if (sf_type.find("MVA") == 0) {
@@ -1121,7 +891,7 @@ float SSBCorrections::GetElectronSF(const std::string& sf_type, float eta, float
         else if (sf_type == "MVAMedium") working_point = "wp80noiso";
         else if (sf_type == "MVATight") working_point = "wp90iso";
         else {
-            std::cerr << "[WARNING] Unknown MVA working point: " << sf_type << ", using wp90iso" << std::endl;
+            logger_.Warning() << "Unknown MVA working point: " << sf_type << ", using wp90iso" << std::endl;
             working_point = "wp90iso";
         }
     }
@@ -1129,18 +899,18 @@ float SSBCorrections::GetElectronSF(const std::string& sf_type, float eta, float
 
     try {
         if (!ele_sf_) {
-            std::cerr << "[ERROR] ele_sf_ pointer is null!" << std::endl;
+            logger_.Error() << "[GetElectronSF] ele_sf_ pointer is null!" << std::endl;
             return 1.0;
         }
 
         // Validate parameters before evaluation
         if (year_.empty()) {
-            std::cerr << "[ERROR] Year is empty!" << std::endl;
+            logger_.Error() << "[GetElectronSF] Year is empty!" << std::endl;
             return 1.0;
         }
 
         if (working_point.empty()) {
-            std::cerr << "[ERROR] Working point is empty!" << std::endl;
+            logger_.Error() << "[GetElectronSF] Working point is empty!" << std::endl;
             return 1.0;
         }
 
@@ -1149,15 +919,15 @@ float SSBCorrections::GetElectronSF(const std::string& sf_type, float eta, float
 
         // Sanity check on result
         if (result <= 0.0 || result > 10.0) {
-            std::cerr << "[WARNING] Unusual SF value: " << result
+            logger_.Warning() << "[GetElectronSF] Unusual SF value: " << result
                       << " for parameters: " << working_point << ", eta=" << eta << ", pt=" << pt << std::endl;
         }
 
         return result;
 
     } catch (const std::exception& e) {
-        std::cerr << "[GetElectronSF] Evaluation failed: " << e.what() << std::endl;
-        std::cerr << "  Parameters: year='" << year_ << "', valtype='" << valtype
+        logger_.Error() << "[GetElectronSF] Evaluation failed: " << e.what() << std::endl;
+        logger_.Error() << "[GetElectronSF] Parameters: year='" << year_ << "', valtype='" << valtype
                   << "', working_point='" << working_point << "', eta=" << eta << ", pt=" << pt << std::endl;
         return 1.0;
     }
@@ -1167,32 +937,28 @@ float SSBCorrections::GetPUWeight(float nTrueInt, const std::string& systTag) co
     std::string variation = systTag;
     
     if (!pu_weight_) {
-        std::cerr << "[SSBCorrections::GetPUWeight] PU correction not loaded.\n";
+        logger_.Error() << "[GetPUWeight] PU correction not loaded." << std::endl;
         return 1.0;
     }
-    
+
     // If systTag is "Central" or empty, treat as "nominal"
     if (systTag == "Central" || systTag == "") {
         variation = "nominal";
     }
-    
-    //std::cout << "variation in PU " << variation << std::endl;
 
     // If the variation is not valid, fallback to "nominal"
     if (variation != "nominal" && variation != "up" && variation != "down") {
-        std::cerr << "PileUp sys Error ... Defaulting to Weight_PileUp ... Original value: " << variation << std::endl;
+        logger_.Warning() << "[GetPUWeight] Unrecognized systematic '" << variation
+                  << "', defaulting to nominal." << std::endl;
         variation = "nominal";
     }
-    
-    //std::cout << "nTrueInt : " << nTrueInt << std::endl;
-    
+
     try {
         std::variant<double, std::vector<double>> val = pu_weight_->evaluate({ nTrueInt, variation });
         double weight = std::get<double>(val);
-        //std::cout << "PileUp weight: " << weight << std::endl;  
         return weight;
     } catch (const std::exception& e) {
-        std::cerr << "[SSBCorrections::GetPUWeight] Evaluation failed: " << e.what() << std::endl;
+        logger_.Error() << "[GetPUWeight] Evaluation failed: " << e.what() << std::endl;
         return 1.0;
     }
 }
@@ -1250,21 +1016,12 @@ std::vector<TLorentzVector> SSBCorrections::ApplyJetCorrections(
             corrected_mass = GetCorrectedJetMass(raw_mass, raw_pt, eta, areas[i], rho, run_number);
         }
 
-        // Snapshot the pt BEFORE JER smearing so the mass-rescaling below only
-        // folds in the JER-specific ratio, not the JEC factor a second time.
-        // (Bug found 2026-08: this used to divide by raw_pt instead of
-        // pt_before_jer, so corrected_mass ended up carrying jec_sf^2 *
-        // jer_ratio instead of jec_sf * jer_ratio - i.e. the JEC scale factor
-        // was silently squared into the jet mass whenever applyJES was on,
-        // pre-dating this session's other JEC/JER fixes.)
+        // Snapshot pt before JER so the mass rescale below only folds in the
+        // JER ratio, not the JEC factor a second time.
         double pt_before_jer = corrected_pt;
 
         if (!isData && applyJER) {
-            // Always smear (previously this block only ran when a valid gen
-            // match existed, silently skipping JER entirely otherwise). Pass
-            // -1.0 as the "no gen match" sentinel when Jet_genJetIdx has no
-            // valid entry for this jet - SmearJER() falls back to stochastic
-            // smearing in that case rather than leaving the jet unsmeared.
+            // -1.0 = no gen match; SmearJER() falls back to stochastic smearing.
             float matched_genpt = -1.0;
             float matched_geneta = 0.0;
             float matched_genphi = 0.0;
@@ -1317,22 +1074,8 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
     double met_px = raw_met_pt * std::cos(raw_met_phi);
     double met_py = raw_met_pt * std::sin(raw_met_phi);
 
-    // Shared per-jet logic, confirmed against the CMS JERC tutorial's
-    // Applier::correctedMet(): muon-subtract the raw pt, apply JES/JER
-    // (reusing GetCorrectedJetPt/GetL1CorrectedJetPt/SmearJER so this can't
-    // silently drift out of sync with the physics-jet path), require the
-    // Type-1 selection (corrected pt>15, |eta|<5.2, chEmEF+neEmEF<0.90), and
-    // accumulate the (L1only_no_mu - corrected_no_mu) differential into MET -
-    // NOT (raw_no_mu - corrected_no_mu), which was the bug in an earlier
-    // version of this function (and was also present in the old fused
-    // ApplyJetCorrectionsWithMET/RecomputeMET path, now removed entirely -
-    // this function is the sole MET computation).
-    //
-    // matchedGenPt is now resolved by the CALLER (see the two loops below)
-    // instead of being computed here via a DeltaR rematch against genJets -
-    // regular Jet_ jets and CorrT1METJet_ jets resolve it differently (see
-    // the loops), so this lambda just takes whatever gen pt (or -1.0 for
-    // "no match") the caller already decided on.
+    // Per-jet: muon-subtract raw pt, apply JES/JER, require Type-1 selection
+    // (pt>15, |eta|<5.2, chEmEF+neEmEF<0.90), accumulate delta into MET.
     auto accumulate = [&](double eta, double phi, double rawPtRaw, double area,
                           double muonSubtrFactor, double chEmEF, double neEmEF,
                           float matchedGenPt, float matchedGenEta, float matchedGenPhi) {
@@ -1346,15 +1089,11 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
             corrPtNoMu = GetCorrectedJetPt(rawPtNoMu, eta, area, rho, run_number);
         }
         if (!isData && applyJER) {
-            // -1.0 sentinel handled inside SmearJER as "no gen match" (falls
-            // back to stochastic smearing). matchedGenEta/Phi are unused by
-            // SmearJER when matchedGenPt < 0.
             corrPtNoMu = SmearJER(corrPtNoMu, matchedGenPt, matchedGenEta, matchedGenPhi,
                                    eta, phi, rho, event_number, jerSysTag);
         }
 
-        // Type-1 selection cut (CMS JERC tutorial's JvmApplication-adjacent
-        // correctedMet() logic) - only jets passing this contribute to MET.
+        // Type-1 selection - only jets passing this contribute to MET.
         bool passSel = (corrPtNoMu > 15.0) && (std::abs(eta) < 5.2) && ((chEmEF + neEmEF) < 0.90);
         if (!passSel) return;
 
@@ -1362,16 +1101,9 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
         met_py += (l1PtNoMu - corrPtNoMu) * std::sin(phi);
     };
 
-    // Regular Jet_ branch jets: jetsAsStored holds the NanoAOD-stored
-    // (already centrally-corrected) pt, so undo rawFactor first to get the
-    // true raw pt - same convention as ApplyJetCorrections.
-    //
-    // Gen matching (2026-08 fix): use Jet_genJetIdx (jetGenJetIndices, same
-    // index/convention as ApplyJetCorrections' genJetIndices) instead of a
-    // DeltaR rematch - these are the same physical jets ApplyJetCorrections
-    // already matched via Jet_genJetIdx for the physics-jet collection, so
-    // the MET path should agree with it rather than compute a second,
-    // possibly-different match independently.
+    // jetsAsStored holds NanoAOD's already-corrected pt, so undo rawFactor
+    // first. Gen match reuses Jet_genJetIdx (same as ApplyJetCorrections) so
+    // this path can't disagree with the physics-jet path's match.
     for (size_t i = 0; i < jetsAsStored.size(); ++i) {
         double rawFactor = (i < jetRawFactors.size()) ? jetRawFactors[i] : 0.0f;
         double area       = (i < jetAreas.size())       ? jetAreas[i]       : 0.5f;
@@ -1394,14 +1126,9 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
                    matchedGenPt, matchedGenEta, matchedGenPhi);
     }
 
-    // Low-pT CorrT1METJet_ branch jets: rawPt is already raw (no rawFactor to
-    // undo). No EM-fraction branches exist for these (too low-pT to have
-    // them produced) - pass 0/0, same as the CMS JERC tutorial's
-    // CollectJetMet.hpp ("EM fractions are not provided for CorrT1METJet;
-    // set to zero explicitly"). No Jet_genJetIdx-equivalent branch exists
-    // for this collection either, so it keeps the DeltaR-based MatchGenPt()
-    // rematch - the same acknowledged-imperfect approach the tutorial
-    // itself uses for these jets.
+    // CorrT1METJet_ jets: rawPt is already raw, no EM-fraction branches exist
+    // (pass 0/0, per the tutorial), and there's no genJetIdx equivalent so
+    // this falls back to the DeltaR-based MatchGenPt() rematch.
     for (size_t i = 0; i < corrT1RawPt.size(); ++i) {
         double area      = (i < corrT1Area.size())               ? corrT1Area[i]               : 0.5f;
         double muonSubtr = (i < corrT1MuonSubtrFactor.size())    ? corrT1MuonSubtrFactor[i]    : 0.0f;
@@ -1435,15 +1162,11 @@ bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet, double chEmEF, dou
 
     // Check if jetvetomap is loaded
     if (!jetvetomap_) {
-        std::cerr << "[WARNING] Jet veto map not loaded, skipping HEM veto" << std::endl;
+        logger_.Warning() << "Jet veto map not loaded, skipping HEM veto" << std::endl;
         return false;
     }
 
-    // Pre-selection cut confirmed from the CMS JERC tutorial's
-    // JvmApplication::VetoChecker (kMaxEmFrac = 0.90) - pt/jetId pre-selection
-    // are already applied at the only call site (Analysis::JetSelector)
-    // before ShouldVetoJet() is invoked, so only the EM-fraction cut is
-    // checked here.
+    // pt/jetId pre-selection already applied by the only caller (JetSelector).
     if ((chEmEF + neEmEF) >= 0.90) {
         return false;
     }
@@ -1458,23 +1181,15 @@ bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet, double chEmEF, dou
         });
         
         double veto_flag = std::get<double>(val);
-        
-        // Debug output to see what values we're getting
-//        std::cout << "[DEBUG] Jet eta=" << eta << ", phi=" << phi 
-//                  << " -> veto_flag=" << veto_flag << std::endl;
-        
+
         // Return true if jet should be vetoed (non-zero value)
         bool should_veto = (veto_flag > 0.0);
-        
-//        if (should_veto) {
-//            std::cout << "[DEBUG] -> VETOED (flag=" << veto_flag << ")" << std::endl;
-//        }
-        
+
         return should_veto;
-        
+
     } catch (const std::exception& e) {
-        std::cerr << "[WARNING] Jet veto map evaluation failed for jet (eta=" 
-                  << eta << ", phi=" << phi << ") with key=" << jveto_key_ 
+        logger_.Warning() << "Jet veto map evaluation failed for jet (eta="
+                  << eta << ", phi=" << phi << ") with key=" << jveto_key_
                   << ": " << e.what() << std::endl;
         return false;
     }
@@ -1483,17 +1198,12 @@ bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet, double chEmEF, dou
 
 void SSBCorrections::InitBtagSFCorrection(const std::string& json_path, 
                                           const std::string& tagger_name) {
-    std::cout << "[SSBCorrections] Loading b-tagging SF from JSON: " << json_path << std::endl;
+    logger_.Info() << "Loading b-tagging SF from JSON: " << json_path << std::endl;
     
     auto cset = correction::CorrectionSet::from_file(json_path);
 
-    // UParT's btagging.json.gz (confirmed by directly inspecting the file)
-    // only ships ONE heavy-flavor SF, named "UParTAK4_comb" (no per-BTagSFType
-    // "..._mujets" variant the way DeepJet/DeepCSV do), and names its
-    // light-flavor SF "UParTAK4_light" instead of "..._incl". Detected here by
-    // the tagger_name prefix, since that already fully identifies which
-    // scheme is in play (constructor already built it as exactly
-    // "UParTAK4_comb" for this case - see there).
+    // UParT ships only one heavy-flavor SF ("UParTAK4_comb", no "_mujets"
+    // variant) and names light-flavor "UParTAK4_light" instead of "_incl".
     bool isUParT = (tagger_name.rfind("UParTAK4", 0) == 0);
 
     std::string heavy_flavor_name = tagger_name;  // e.g., "deepJet_comb" or "UParTAK4_comb"
@@ -1506,7 +1216,7 @@ void SSBCorrections::InitBtagSFCorrection(const std::string& json_path,
         if (pos != std::string::npos) {
             light_flavor_name.replace(pos, 4, "light");
         } else {
-            std::cerr << "[ERROR] Expected 'comb' in tagger_name: " << tagger_name << std::endl;
+            logger_.Error() << "Expected 'comb' in tagger_name: " << tagger_name << std::endl;
             return;
         }
     } else {
@@ -1515,7 +1225,7 @@ void SSBCorrections::InitBtagSFCorrection(const std::string& json_path,
         if (pos != std::string::npos) {
             heavy_flavor_name.replace(pos, 4, btag_sf_type_);
         } else {
-            std::cerr << "[ERROR] Expected 'comb' in tagger_name: " << tagger_name << std::endl;
+            logger_.Error() << "Expected 'comb' in tagger_name: " << tagger_name << std::endl;
             return;
         }
 
@@ -1530,25 +1240,20 @@ void SSBCorrections::InitBtagSFCorrection(const std::string& json_path,
     btag_corrections_["heavy"] = cset->at(heavy_flavor_name);
     btag_corrections_["light"] = cset->at(light_flavor_name);
 
-    std::cout << "[SSBCorrections] Loaded corrections: "
+    logger_.Info() << "Loaded corrections: "
               << heavy_flavor_name << " and " << light_flavor_name << std::endl;
 
-    // UParTAK4_wp_values: lets Jet_btag="UParTM" alone determine the numeric
-    // discriminant cut (via GetBtagWPCut()) instead of also requiring a
-    // manually-copied "BTagDiscCut" config value - confirmed present in the
-    // real btagging.json.gz (item 13 in NOTES.md), just not wired in until
-    // now. Optional/try-catch guarded like every other non-essential
-    // correction here: if this ever fails to load or evaluate, Analysis.cpp
-    // falls back to requiring the config value, exactly like before this was
-    // added - nothing regresses if the lookup doesn't pan out.
+    // Lets Jet_btag="UParTM" alone determine the cut via GetBtagWPCut(),
+    // instead of also requiring an explicit BTagDiscCut. Optional - falls
+    // back to the config value if this fails to load.
     if (isUParT) {
         std::string wpValuesName = tagger_name.substr(0, tagger_name.find('_')) + "_wp_values";
         btag_wp_values_ = LoadOptionalCorrection<correction::Correction>(
             [&]() { return cset->at(wpValuesName); },
             "Could not load '" + wpValuesName +
-            "'. BTagDiscCut must be set explicitly in the config for this tagger.");
+            "'. BTagDiscCut must be set explicitly in the config for this tagger.", logger_);
         if (btag_wp_values_) {
-            std::cout << "[INFO] Loaded WP-cut lookup correction ('" << wpValuesName
+            logger_.Info() << "Loaded WP-cut lookup correction ('" << wpValuesName
                       << "') - Jet_btag's working point letter alone can now determine "
                       << "BTagDiscCut if it's not set explicitly in the config." << std::endl;
         }
@@ -1565,7 +1270,7 @@ double SSBCorrections::GetBtagWPCut(const std::string& wp) const {
         // evaluate() call against this same btagging.json.gz.
         return btag_wp_values_->evaluate({wp});
     } catch (const std::exception& e) {
-        std::cerr << "[WARNING] GetBtagWPCut('" << wp << "') failed: " << e.what()
+        logger_.Warning() << "GetBtagWPCut('" << wp << "') failed: " << e.what()
                   << ". If this is an input-count/type mismatch, the wp_values correction's "
                   << "actual schema differs from the single-string-input assumption here - "
                   << "check with `python3 -c \"import correctionlib; "
@@ -1589,14 +1294,14 @@ float SSBCorrections::GetBtagSF(float pt, float eta, int flav,
     auto it = btag_corrections_.find(corr_name);
     
     if (it == btag_corrections_.end()) {
-        std::cerr << "[ERROR] B-tag correction not found: " << corr_name << std::endl;
+        logger_.Error() << "B-tag correction not found: " << corr_name << std::endl;
         return 1.0;
     }
 
     try {
         return it->second->evaluate({syst, wp, flav, eta_abs, pt_clamped});
     } catch (const std::exception& e) {
-        std::cerr << "[WARNING] GetBtagSF failed: " << e.what() << std::endl;
+        logger_.Warning() << "GetBtagSF failed: " << e.what() << std::endl;
         return 1.0;
     }
 }
@@ -1613,10 +1318,9 @@ float SSBCorrections::ComputeBTagEventWeight(const std::vector<float>& pts,
     if (pts.size() != etas.size() || 
         pts.size() != flavs.size() || 
         pts.size() != isTagged.size()) {
-        std::cout << "Input vectors have different sizes" << std::endl;
+        logger_.Warning() << "ComputeBTagEventWeight: input vectors have different sizes" << std::endl;
         return 1.0;
     }
-    //std::cout << "start ! " << std::endl; 
     // Initialize probabilities
     float p_mc = 1.0;
     float p_data = 1.0;
@@ -1648,11 +1352,6 @@ float SSBCorrections::ComputeBTagEventWeight(const std::vector<float>& pts,
             p_mc *= (1.0f - eff);
             p_data *= (1.0f - eff * sf);
         }
-        
-        /*std::cout << "  Jet " << i << ": pt=" << pt << ", eta=" << eta 
-                  << ", flav=" << flav << ", tagged=" << tagged 
-                  << ", SF=" << sf << ", Eff=" << eff 
-                  << ", p_mc=" << p_mc << ", p_data=" << p_data << std::endl;*/
     }
     
     // Calculate final event weight
@@ -1665,57 +1364,28 @@ float SSBCorrections::ComputeBTagEventWeight(const std::vector<float>& pts,
 void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath,
                                              const std::string& algo,
                                              const std::string& wp) {
-    TFile* f = TFile::Open(filepath.c_str(), "READ");
+    std::unique_ptr<TFile> f(TFile::Open(filepath.c_str(), "READ"));
     if (!f || f->IsZombie()) {
-        std::cerr << "[ERROR] Failed to open efficiency file: " << filepath << std::endl;
+        logger_.Error() << "Failed to open efficiency file: " << filepath << std::endl;
         return;
     }
 
     for (const std::string& flav : {"b", "c", "l"}) {
         std::string name = "eff_" + algo + "_" + flav + "_" + wp;
-        TH2D* hist = (TH2D*)f->Get(name.c_str());
+        auto* hist = dynamic_cast<TH2*>(f->Get(name.c_str()));
         if (hist) {
-            TH2D* hist_copy = (TH2D*)hist->Clone((name + "_copy").c_str());
+            std::unique_ptr<TH2> hist_copy(static_cast<TH2*>(hist->Clone((name + "_copy").c_str())));
             hist_copy->SetDirectory(0);
-            auto it = eff_histograms_.find(algo + "_" + flav + "_" + wp);
-            if (it != eff_histograms_.end() && it->second) {
-                delete it->second;
-            }
-            eff_histograms_[algo + "_" + flav + "_" + wp] = hist_copy;
-            std::cout << "[INFO] Loaded and copied hist: " << name << std::endl;
+            // Assigning to the map slot destroys any previous unique_ptr there automatically.
+            eff_histograms_[algo + "_" + flav + "_" + wp] = std::move(hist_copy);
+            logger_.Debug() << "Loaded and copied hist: " << name << std::endl;
         } else {
-            std::cerr << "[WARNING] Histogram not found: " << name << std::endl;
-        }
-    }
-    f->Close();
-    delete f;
-}
-
-/*
-void SSBCorrections::LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo) {
-    TFile* f = TFile::Open(filepath.c_str(), "READ");
-    if (!f || f->IsZombie()) {
-        std::cerr << "[ERROR] Failed to open efficiency file: " << filepath << std::endl;
-        return;
-    }
-
-    for (const std::string& flav : {"b", "c", "l"}) {
-        for (const std::string& wp : {"Loose", "Medium", "Tight"}) {
-            std::string name = "eff_" + algo + "_" + flav + "_" + wp;
-	    //std::cout << "name in LoadMCBtagEfficiencies : " << name << std::endl;
-            TH2D* hist = (TH2D*)f->Get(name.c_str());
-            if (hist) {
-                hist->SetDirectory(0); // Detach histogram from file
-                eff_histograms_[algo + "_" + flav + "_" + wp] = hist;
-                //std::cout << "[INFO] Loaded hist: " << name << std::endl;
-            } else {
-                std::cerr << "[WARNING] Histogram not found: " << name << std::endl;
-            }
+            logger_.Warning() << "Histogram not found: " << name << std::endl;
         }
     }
     f->Close();
 }
-*/
+
 float SSBCorrections::GetMCBtagEfficiency(float pt, float eta, int flav, const std::string& algo, const std::string& wp) const {
     std::string flav_str = "l";
     if (flav == 5) flav_str = "b";
@@ -1728,14 +1398,13 @@ float SSBCorrections::GetMCBtagEfficiency(float pt, float eta, int flav, const s
     else if (wp == "T") wp_full = "Tight";
 
     std::string key = algo + "_" + flav_str + "_" + wp_full;
-    //std::cout << "[Info] key in GetMCBtagEfficiency " << key << std::endl;
     auto it = eff_histograms_.find(key);
     if (it == eff_histograms_.end()) {
-        std::cerr << "[WARNING] Efficiency hist not found: " << key << std::endl;
+        logger_.Warning() << "Efficiency hist not found: " << key << std::endl;
         return 1.0;
     }
 
-    TH2D* hist = it->second;
+    TH2* hist = it->second.get();
     int bin_x = hist->GetXaxis()->FindBin(pt);
     int bin_y = hist->GetYaxis()->FindBin(eta);
     float eff = hist->GetBinContent(bin_x, bin_y);
@@ -1781,7 +1450,7 @@ TLorentzVector SSBCorrections::METXYCorrection_corrlib(const TLorentzVector& typ
                                                bool isData,
                                                int npv) const {
     if (!metphi_corr_) {
-        std::cerr << "[SSBCorrections::METXYCorrection] MET correction object not loaded.\n";
+        logger_.Error() << "[METXYCorrection] MET correction object not loaded." << std::endl;
         return type1_met;
     }
 
@@ -1797,16 +1466,16 @@ TLorentzVector SSBCorrections::METXYCorrection_corrlib(const TLorentzVector& typ
         if (std::holds_alternative<double>(val_x)) {
             corr_x = std::get<double>(val_x);
         } else {
-            std::cerr << "[METXYCorrection] Warning: unexpected type for x correction\n";
+            logger_.Warning() << "[METXYCorrection] unexpected type for x correction" << std::endl;
         }
 
         if (std::holds_alternative<double>(val_y)) {
             corr_y = std::get<double>(val_y);
         } else {
-            std::cerr << "[METXYCorrection] Warning: unexpected type for y correction\n";
+            logger_.Warning() << "[METXYCorrection] unexpected type for y correction" << std::endl;
         }
     } catch (const std::exception& e) {
-        std::cerr << "[SSBCorrections::METXYCorrection] Evaluation failed: " << e.what() << std::endl;
+        logger_.Error() << "[METXYCorrection] Evaluation failed: " << e.what() << std::endl;
         return type1_met;
     }
 
@@ -1872,38 +1541,23 @@ std::string SSBCorrections::ExpandJECName(const std::string& base_jec_name, cons
     //  "Summer19UL16_v7" -> prefix = "Summer19UL16", version = "7"
     size_t pos = base_jec_name.find("_V");
     if (pos == std::string::npos) {
-        std::cerr << "[ERROR] Invalid jec_name format: " << base_jec_name << std::endl;
+        logger_.Error() << "Invalid jec_name format: " << base_jec_name << std::endl;
         return base_jec_name; // fallback
     }
 
     std::string prefix = base_jec_name.substr(0, pos);             // "Summer19UL16"
     std::string version = base_jec_name.substr(pos + 2);           // "7"
-    // Was hardcoded to "_L1L2L3Res_AK4PFchs" - NanoAODv15's Jet_ collection is
-    // AK4 Puppi, not PFchs, so this now comes from the caller (config-driven:
-    // JetAlgoTag/JECLevel), defaulting to the Puppi values. See the CMS CAT
-    // jet_jerc.json.gz correction names (e.g. "..._L1FastJet_AK4PFPuppi",
-    // "..._L2Relative_AK4PFPuppi") - if the compound correction there isn't
-    // literally named "..._L1L2L3Res_AK4PFPuppi", set JECLevel in the config
-    // to whatever the actual compound entry is called instead.
+    // Config-driven (JetAlgoTag/JECLevel), defaulting to Puppi - v15's Jet_
+    // collection is AK4 Puppi, not the old PFchs this was hardcoded to.
     std::string suffix = "_" + jecLevel + "_" + jetAlgo;
 
     std::string expanded = prefix;  // prefix
 
-    // Confirmed from the user's jet_jerc.json.gz screenshot: the v15 Puppi
-    // compound corrections are named e.g.
-    // "Summer20UL18NanoV15_V1_DATA_L1L2L3Res_AK4PFPuppi" - a SINGLE name for
-    // all of 2018 data, with no per-era ("_RunA"/"_RunB"/...) component. The
-    // DATA compound's declared inputs also included "run" (a 5th evaluate()
-    // input beyond area/eta/pt/rho - see jec_needs_run_), meaning era
-    // resolution now happens *inside* the correction from the run number,
-    // not via the correction *name* as in the old v9/PFchs scheme below. So:
-    // skip the whole per-era name-building chain for Puppi jets; only do it
-    // for PFchs (kept for v9 compatibility / in case some other campaign's
-    // Puppi json still uses the old per-era-name convention).
+    // v15 Puppi compounds use a single name per year (era resolved inside the
+    // correction via the "run" input - see jec_needs_run_), so skip the
+    // per-era name-building chain below; only PFchs (v9) still needs it.
     bool useEraInName = (jetAlgo.find("Puppi") == std::string::npos);
 
-    // Year-specific logic (only for the old v9/PFchs per-era-name convention -
-    // see useEraInName above)
     if (useEraInName) {
     if (runPeriod.find("16Pre") != std::string::npos) {
         if (is_data) {
@@ -2004,7 +1658,7 @@ std::string SSBCorrections::GetProcessSubDir(const std::string& inputfileName) c
     if (inputfileName.find("TTW") != std::string::npos ||
         inputfileName.find("TTZ") != std::string::npos) return "TTV";
 
-    std::cerr << "[WARNING] GetProcessSubDir: no match for '" << inputfileName
+    logger_.Warning() << "GetProcessSubDir: no match for '" << inputfileName
               << "', falling back to TTbar_Signal" << std::endl;
     return "TTbar_Signal";
 }
