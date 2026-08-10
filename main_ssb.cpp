@@ -78,13 +78,13 @@ int main(int argc, char **argv)
     // Merge input files into a single TChain
     FILE *filelist;
     char filename[1000];
-    string filelistDir, filelistName, filelistPath;
+    //string filelistDir, filelistName, filelistPath;
 
-    filelistDir = "./input/";
 
     filelistName = argv[1];
-    filelistPath = filelistDir + filelistName;
-    filelist = fopen(filelistPath.c_str(),"r");
+    std::string filelistPath = argv[1];
+    std::string filelistName = filelistPath;
+    filelist = fopen(filelistPath.c_str(), "r");
 
     std::vector<double> genentries_pertree;
     std::vector<double> entries_pertree;
