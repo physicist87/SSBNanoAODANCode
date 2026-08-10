@@ -6,22 +6,9 @@
 #include <map>
 #include <string>
 
-// ============================================================================
-// Phase 1 debug/logging infrastructure - additive only.
-//
-// Nothing in Analysis/SSBCorrections currently includes or calls into this
-// file. It exists so the *next* small step (migrating a handful of the
-// existing 140+ std::cout call sites in Analysis.cpp, one function at a
-// time) has something to migrate to, without this step itself touching the
-// event loop. Keeping infrastructure-addition and infrastructure-adoption as
-// two separate diffs means a regression failure after this step can't be
-// caused by this file (nothing calls it yet), and a regression failure after
-// the adoption step is easy to bisect to "which cout did we replace".
-//
-// Deliberately NOT a third-party logging library - this is a grid/cvmfs job
-// environment, so a new dependency costs more than the convenience it buys.
-// Everything here is std::cerr/std::cout underneath, same as the code today.
-// ============================================================================
+// Logging/debug infrastructure: Logger (leveled cout/cerr wrapper),
+// DebugEventFilter (trace one run:lumi:event), CorrectionFallbackCounter
+// (counts correctionlib fallbacks). No third-party logging lib, by design.
 
 // ----------------------------------------------------------------------------
 // LogLevel / Logger
@@ -45,18 +32,9 @@ inline const char* ToString(LogLevel lvl) {
     return "?";
 }
 
-// One Logger per Analysis job (own it as a member, don't make it a global -
-// keeps this testable and avoids static-init-order issues with other
-// globals in this codebase, e.g. the TROOT root(...) in main_ssb.cpp).
-//
-// Usage (once call sites are migrated - see note above):
-//   logger_.Warning() << "[BTaggingSFApply] correctionlib evaluate() failed: " << e.what();
-//   logger_.Debug()   << "nJet=" << v_jet_idx.size() << " nBJet=" << v_bjet_idx.size();
-//
-// Messages above the configured level are cheaply dropped (the `if` guards
-// the stream formatting itself, not just the final write) - Trace-level
-// per-event prints won't cost anything in a normal production job run at
-// the default Info level.
+// One Logger per Analysis job, owned as a member (not a global) to avoid
+// static-init-order issues. Messages above the configured level are dropped
+// cheaply via a null stream, so per-event Trace prints cost nothing by default.
 class Logger {
 public:
     explicit Logger(LogLevel level = LogLevel::Info) : level_(level) {}
@@ -96,20 +74,9 @@ private:
     }
 };
 
-// ----------------------------------------------------------------------------
-// DebugEventFilter - "trace exactly this run:lumi:event through every stage"
-// ----------------------------------------------------------------------------
-// Config keys (read the usual way via TextReader, see SSBConfReader in
-// Analysis - not wired up yet, this class only does the matching):
-//   DebugMode  = true/false
-//   DebugRun   = 315257
-//   DebugLumi  = 112
-//   DebugEvent = 18452731
-//
-// A field left at 0 (the default) matches any run/lumi/event, e.g. leaving
-// DebugLumi=0 traces every lumi block of the given run+event... but since
-// (run,lumi,event) should be unique per event in practice, ordinarily all
-// three are set together to pin exactly one event.
+// DebugEventFilter: traces exactly one run:lumi:event through every stage,
+// configured via DebugMode/DebugRun/DebugLumi/DebugEvent. A field left at 0
+// (default) matches any value for that field.
 class DebugEventFilter {
 public:
     DebugEventFilter() = default;
@@ -138,23 +105,8 @@ private:
     unsigned long long event_ = 0;
 };
 
-// ----------------------------------------------------------------------------
-// CorrectionFallbackCounter - "did any correctionlib lookup silently fall
-// back to a default value, and for how many events"
-// ----------------------------------------------------------------------------
-// Motivating example (src/Analysis.cpp, BTaggingSFApply()):
-//   catch (const std::exception& e) {
-//       std::cerr << "Error in BTaggingSFApply: " << e.what() << std::endl;
-//       btag_sf_weight_ = 1.0; // Default on error
-//   }
-// This prints to cerr today, but it's one line among 140+ other std::cout/
-// std::cerr calls in a grid job's log - easy to miss. Recording it here
-// instead (or in addition) means a job-end summary can answer "did this run
-// silently default any weights" in one line instead of grepping megabytes
-// of log.
-//
-// Not wired into SSBCorrections/Analysis yet - same reasoning as Logger
-// above (keep addition and adoption separate).
+// CorrectionFallbackCounter: counts correctionlib evaluate() failures that
+// fell back to a default, printed once as a summary at end of job.
 class CorrectionFallbackCounter {
 public:
     void RecordFallback(const std::string& correctionName) {

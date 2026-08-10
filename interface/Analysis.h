@@ -33,20 +33,15 @@
 // CPVObservables Calculator
 #include "./../interface/SSBCPVCalc.h"
 
-// NanoAOD branch reading (version-agnostic: handles NanoAOD storage-type
-// changes and renames between versions so this class doesn't have to)
+// Version-agnostic NanoAOD branch reading (handles storage-type/rename
+// differences between NanoAOD versions).
 #include "./NanoAODBranchReader.h"
 #include "./JetID.h"
 
-// Named cutflow-stage indices for the h_*[10]-style per-stage histogram
-// arrays below (h_Lep1pt, h_Num_PV, ...) - see interface/SelectionStage.h
-// for the full trace of what each stage actually corresponds to in Loop().
+// Cutflow-stage indices for the h_*[10] per-stage histogram arrays below.
 #include "./SelectionStage.h"
 
-// Debug event tracer (run:lumi:event, config-driven, off by default) and
-// correction-fallback counter (records when a correctionlib evaluate()
-// call in Loop()'s catch blocks fell back to a default value instead of a
-// real correction) - see interface/DebugTools.h.
+// Logger, debug event tracer, correction-fallback counter.
 #include "./DebugTools.h"
 
 
@@ -55,23 +50,9 @@ public:
     // Constructor and destructor
 Analysis(TChain *chain, std::string inputName, std::string seDirName, std::string outputName, const std::string &branchListFile, const std::string &configFile, int NumEvt);
 
-    //~Analysis() = default;
     ~Analysis();
 
-    // 2026-08: Analysis owns 4 heap objects (fout/SSBConfReader/SSBCorr/
-    // SSBCPVCal - see their std::unique_ptr declarations below) that its
-    // destructor cleans up. Before this, the class had no user-declared
-    // copy constructor/assignment, so the compiler-generated (shallow-copy)
-    // versions were still callable - copying an Analysis would have copied
-    // those 4 raw pointers, and both copies' destructors would then double-
-    // delete the same objects. Never actually triggered in practice (this
-    // class is constructed once in main_ssb.cpp and never copied), but it
-    // was a live footgun. Deleting these explicitly documents "this class
-    // is not copyable" instead of relying on nobody happening to copy it -
-    // matches the pattern SSBCorrections already uses for the same reason.
-    // (Switching the 4 pointers to unique_ptr below would make this
-    // implicit too, but explicit is clearer for a reader who doesn't
-    // already know that rule.)
+    // Copying would double-free the unique_ptr-owned heap objects below.
     Analysis(const Analysis&) = delete;
     Analysis& operator=(const Analysis&) = delete;
 
@@ -84,21 +65,12 @@ Analysis(TChain *chain, std::string inputName, std::string seDirName, std::strin
     void Start();
     void DeclareHistos();
 private:
-    // TTreeReader and TChain
-    // chain is NOT owned by Analysis - it's constructed by the caller
-    // (main_ssb.cpp) and passed in; Analysis only observes it. Left as a
-    // raw pointer deliberately (a non-owning observer pointer is exactly
-    // what a raw pointer should mean in modern C++ - wrapping it in
-    // unique_ptr here would be wrong, since that implies ownership).
+    // Not owned - constructed by the caller (main_ssb.cpp), Analysis only observes it.
     TChain *chain;
     std::string outfile;
     std::string outdir;
     TTreeReader fReader;
-    // fout IS owned by Analysis (created in Start(), see src/Analysis.cpp) -
-    // std::unique_ptr<TFile> instead of a raw TFile* so the destructor's
-    // cleanup is automatic (and exception-safe: if anything after Start()
-    // in the constructor were to throw, fout would still get cleaned up,
-    // unlike with a raw pointer + explicit delete only in ~Analysis()).
+    // Owned; unique_ptr for automatic, exception-safe cleanup.
     std::unique_ptr<TFile> fout;
 
     Long64_t current_entry_;
@@ -106,15 +78,7 @@ private:
 
     bool isData;
     bool isBlind;
-    //TextReader from Jaehoon.
-    // All 3 of these are owned by Analysis (constructed with `new` in the
-    // constructor, cleaned up in ~Analysis()) - unique_ptr instead of raw
-    // pointers for the same reason as fout above: automatic + exception-
-    // safe cleanup, and it's what actually makes copying an Analysis a
-    // compile error (see the deleted copy constructor/assignment above -
-    // a unique_ptr member alone would already block the compiler-generated
-    // copy constructor from existing; the explicit `= delete` above is
-    // there so a reader doesn't have to know that rule to see the intent).
+    // Owned; unique_ptr also blocks copying Analysis (see deleted copy ctor above).
     std::unique_ptr<TextReader> SSBConfReader;
     std::unique_ptr<SSBCorrections> SSBCorr;
     std::unique_ptr<SSBCPVCalc> SSBCPVCal;
@@ -144,88 +108,45 @@ private:
     bool apply_puid_ = true;     // whether to apply PUID
 
 
-    // PUID related variables (from Step 1)
     std::string puid_wp_;
     std::string PUIDSFSys;
     float puid_pt_threshold_;
     double evt_weight_beforePUID_;
     double puid_sf_weight_;
-    
-    // ============================================================================
-    // Step 2: NEW - PUID candidate jets information structure
-    // ============================================================================
+
+    // PUID candidate jet info, collected for the weight calc in PUIDSFApply().
     struct PUIDJetInfo {
-        int original_index;     // Original jet index in jets collection
-        float pt, eta;         // Jet kinematics
-        bool passes_puid;      // Whether jet passes PUID
-        bool is_hardscatter;   // Whether jet is matched to gen jet (HardScatter)
-        
-        // Constructor for easy initialization
-        PUIDJetInfo(int idx, float p, float e, bool pass, bool hard) 
+        int original_index;
+        float pt, eta;
+        bool passes_puid;
+        bool is_hardscatter;  // gen-matched, i.e. not pileup
+
+        PUIDJetInfo(int idx, float p, float e, bool pass, bool hard)
             : original_index(idx), pt(p), eta(e), passes_puid(pass), is_hardscatter(hard) {}
     };
-    
-    std::vector<PUIDJetInfo> puid_hardscatter_jets_;  // HardScatter jets for weight calculation
-    
-    // ============================================================================
-    // Step 2: NEW - Function declarations
-    // ============================================================================
+    std::vector<PUIDJetInfo> puid_hardscatter_jets_;
+
     void CollectPUIDCandidates();
     bool IsHardScatterJet(int jet_idx) const;
 
-    // Step 1d: shared per-stage control-plot filler, replacing the
-    // repeated FillHisto(h_XXX[selectionIndex(stage)], ...) blocks previously
-    // duplicated at every selection stage in Loop(). Fills exactly the
-    // histogram set each stage filled before this change (see the call
-    // sites in Loop() and PHASE1.md Step 1d for the stage->set mapping) -
-    // this is a pure mechanical consolidation, not a change to what gets
-    // filled. includeJets/includeBJets select the optional Jet1/Jet2 and
-    // Num_bJets fills; Lep1/Lep2/MET/DiLepMass/Num_PV/Num_Jets are always
-    // filled. FillHisto() itself has no side effects beyond filling its
-    // own histogram, so the fill order inside this helper does not affect
-    // any bin content vs. the original per-stage ordering.
+    // Shared per-stage control-plot filler; includeJets/includeBJets gate optional fills.
     void FillControlPlots(SelectionStage stage, bool includeJets, bool includeBJets);
 
-
-
-    // NanoAOD branch reading (the dynamic type maps, InitBranches, and the
-    // version-agnostic accessors GetIntArrayValue/GetIntSingleValue/
-    // BranchIsAvailable/GetFloatSingleValueByAlias/GetFloatSinglePtrByAlias)
-    // live in NanoAODBranchReader now - see interface/NanoAODBranchReader.h.
-    // Analysis calls through branchReader_ everywhere it used to touch those
-    // maps directly (e.g. branchReader_.floatVectors.at("Jet_pt").get()).
+    // Version-agnostic NanoAOD branch reading - see NanoAODBranchReader.h.
     NanoAODBranchReader branchReader_;
 
-    // Debug event tracer - configured in SetVariables() from DebugMode/
-    // DebugRun/DebugLumi/DebugEvent config keys (all optional, off by
-    // default). Checked once per event in Loop(); when it matches, prints
-    // selection/weight state at a few key checkpoints regardless of the
-    // matched event's actual selection outcome.
+    // Traces one run:lumi:event through Loop() when configured (DebugMode/
+    // DebugRun/DebugLumi/DebugEvent), off by default.
     DebugEventFilter debugFilter_;
-    // Counts correctionlib evaluate() failures caught in Loop()'s existing
-    // catch blocks (jet raw-field reads, b-tag SF, PU-jet-ID SF) that fell
-    // back to a default value instead of a real correction. Printed once at
-    // the end of Loop().
+    // Counts correctionlib evaluate() failures in Loop() that fell back to a
+    // default value; summarized once at end of Loop().
     CorrectionFallbackCounter fallbackCounter_;
 
-    // Step 1e: shared logger, replacing std::cout/std::cerr call sites one
-    // function at a time (see PHASE1.md Step 1e - this is a multi-step
-    // migration, not a single sweep). Defaults to LogLevel::Info, which
-    // means every call site migrated so far still prints unconditionally
-    // (Info and Error are both <= the default level) - this only changes
-    // where a print goes through and how it's prefixed, not whether it
-    // prints. Nothing lowers the level below Info yet.
     Logger logger_;
 
-    // ------------------------------------------------------------------
-    // NanoAODv15 switched the Jet collection to AK4 Puppi jets and removed
-    // the Jet_jetId flag. The POG-recommended tight / tight lepton-veto
-    // working-point logic (from jet energy fractions directly) now lives in
-    // JetID (interface/JetID.h, src/JetID.cpp) - PassConfiguredJetId()
-    // constructs one and delegates, dispatching on the "Jet_ID" config value
-    // (JetId: "PFTight" or "PFTightLepVeto"). idx is the index into the
-    // *raw* NanoAOD Jet collection (not v_jet_idx).
-    // ------------------------------------------------------------------
+    // NanoAODv15 has no Jet_jetId (Puppi jets) - JetID (interface/JetID.h)
+    // reconstructs the POG working point from jet energy fractions instead.
+    // idx is into the raw NanoAOD Jet collection, not v_jet_idx.
     bool PassConfiguredJetId(int idx) const;
 
     std::string removeSubstring(std::string &str, const std::string &keyword);
@@ -238,6 +159,14 @@ private:
     //TString SetInputFileName( char *inname );
     TString SetInputFileName( std::string inname );
     void SetObjectVariable();
+
+    // Gen-level dilepton-channel filter, TTbar_Signal only for now: keeps an
+    // event iff its true (ee/emu/mumu) decay via TopCPVCat_Channel_Idx
+    // matches the analysis's configured channel. Everything else (other
+    // backgrounds, and eventually an inclusive "others" split) passes
+    // through untouched - a no-op (returns true) for data or non-signal files.
+    bool ChannelIndex() const;
+
     void MCSF();
     void MCSFApply();
     void GenWeightApply();
@@ -283,9 +212,6 @@ private:
     void LeptonSFApply();
     void TriggerSFApply();
 
-    ////////////////////////////
-    /// New Kinematic Solver ///
-    ////////////////////////////
     void SetUpKINObs();
     bool isKinSol;
     VLV v_leptons_VLV; 
@@ -298,9 +224,6 @@ private:
     std::vector<double> v_btagging_KIN; 
 
 
-    ////////////////////////////
-    /// Trigger & MET Filter ///
-    ////////////////////////////
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Bool_t>>> triggerList;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Bool_t>>> noiseFilters;
 
@@ -363,39 +286,15 @@ private:
     TTreeReaderArray<Float_t>* gen_jets_phi;
     TTreeReaderArray<Float_t>* gen_jets_M;
     //std::vector<TLorentzVector> genJets;
-    // 2026-08: dojer was read from config ("DoJER") but never actually
-    // gated the JES/JER application booleans passed into
-    // ApplyJetCorrections()/ApplyType1METWithCorrT1() - those two call
-    // sites hardcoded `true, true` regardless of this value (see
-    // MakeJetCollection() in Analysis.cpp). dojes is the analogous flag for
-    // JES, newly added - there was previously no config key for it at all,
-    // JES was unconditionally on. Both now actually gate their respective
-    // corrections - see SetVariables() and MakeJetCollection().
+    // Gate JES/JER application in MakeJetCollection() (config DoJES/DoJER).
     bool dojes;
     bool dojer;
-    // 2026-08: JER systematic wiring. SSBCorrections::SmearJER() already
-    // supported a jer_tag ("nominal"/"up"/"down") parameter that combines
-    // jer_sf_ with the separately-loaded jer_sfunc_ (JER SF uncertainty) as
-    // sf*(1+-unc) - see SmearJER() in SSBCorrections.cpp - but every call
-    // site hardcoded the literal "nominal", so up/down was never reachable.
-    // JERSys is the new config key selecting it; read in SetVariables(),
-    // forwarded through ApplyJetCorrections()/ApplyType1METWithCorrT1()'s
-    // new jerSysTag parameter in MakeJetCollection(). One tag per job,
-    // matching every other systematic in this codebase (TrigSFSys,
-    // PileupSys, etc.) - not a same-job nominal+up+down triple output.
+    // JER systematic tag ("nominal"/"up"/"down"), forwarded to SmearJER()
+    // via ApplyJetCorrections()/ApplyType1METWithCorrT1() (config JERSys).
     TString JERSys;
-    // JES full-uncertainty-set systematic - NOT YET WIRED (2026-08). Design
-    // intent (per your instruction: full set of individually-correlated
-    // sources, not just a single combined "Total" uncertainty; reduced set
-    // deferred): JESSysSource (e.g. "Absolute", "BBEC1_2018", "FlavorQCD",
-    // "Total", or "nominal") + JESSysDir ("up"/"down") will select and load
-    // one named JES uncertainty-source correction from jet_jerc.json.gz and
-    // apply it multiplicatively to GetCorrectedJetPt()'s output, mirroring
-    // how JERSys works above. Blocked on confirming the actual correction
-    // names in your jet_jerc.json.gz (CAT's per-source naming convention
-    // isn't guaranteed to match a simple substitution into jec_name the way
-    // jec_l1_'s L1FastJet name is derived) - not added as member variables
-    // yet to avoid declaring something that doesn't match what's real.
+    // JES full-uncertainty-set systematic - not yet wired; will select one
+    // named source correction from jet_jerc.json.gz once the naming
+    // convention in this campaign's file is confirmed.
 
     // MET //
     TTreeReaderValue<Float_t>* met_pt;
@@ -485,7 +384,6 @@ private:
     int eleid_scbcut;
     int elevetoid_scbcut;
 
-    /// Event weights ...
     double mc_sf_;
     double evt_weight_; 
     double evt_weight_beforemcsf_;
@@ -541,36 +439,12 @@ private:
     double el_id_jetcl_1;
     double el_id_jetcl_2;
 
-    /// BTag -- Variables ///
-    BTagAlgo btag_algo_;  // canonical enum - see SSBCorrections.h ParseBTagAlgo()/BTagAlgoToString()
+    BTagAlgo btag_algo_;  // see SSBCorrections.h ParseBTagAlgo()/BTagAlgoToString()
     std::string btag_wp_; // "L", "M", "T"
 
-
-    // ------------------------------------------------------------------
-    // Histogram ownership (2026-08 doc note, no behavior change): every
-    // TH1D*/TH2D* below (this section, and the singly-declared ones near
-    // the end of this class - h_Top1Mass and friends) is created with
-    // `new TH1D(...)` in DeclareHistos() while `fout` is the *current*
-    // ROOT directory (see Start(): `fout->cd("")` runs right before
-    // DeclareHistos() is called). ROOT's TH1/TH2 constructors register
-    // themselves with whatever TDirectory is "current" at construction
-    // time (unless SetDirectory(0) is called, which nothing here does) -
-    // so `fout` is the real owner of all of these, not Analysis. This is
-    // why ~Analysis() never deletes any of them individually: `fout->Write()`
-    // + `fout->Close()` + the fout unique_ptr's own destructor already
-    // hands every histogram's lifetime to ROOT's directory-close logic.
-    // Deleting a histogram here on top of that would be a use-after-free
-    // once `fout` closes (or a double-free if Close() itself frees them).
-    // Contrast with SSBCorrections, which DOES manually delete its own
-    // TH2D members (H_trig, eff_histograms_) in its destructor - those are
-    // loaded from an *input* efficiency file, never `fout`-current at
-    // construction, so they're never implicitly claimed by any TDirectory
-    // and genuinely need an explicit delete. Two different histogram-
-    // ownership rules in this codebase, both correct for what each one
-    // actually is - flagging explicitly since "some TH1D* members get
-    // deleted and some don't" looks like an inconsistency/bug at a glance
-    // otherwise.
-    // ------------------------------------------------------------------
+    // All TH1D*/TH2D* below are owned by fout (ROOT registers them to the
+    // current TDirectory at construction, set in Start()) - ~Analysis()
+    // never deletes them individually; fout->Write()/Close() does.
     TH1D *h_JetPUIDEvtWeight;
     TH1D *h_bTagEvtWeight;
     TH1D *h_Lep1pt[10];

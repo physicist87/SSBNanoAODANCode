@@ -764,6 +764,11 @@ void Analysis::Loop() {
             }
         };
 
+        // Gen-level dilepton channel filter (signal/other TTbar sample split) -
+        // as early as possible, before any weight computation is wasted on
+        // an event that will be dropped anyway.
+        if (!ChannelIndex()) { traceCutFail("ChannelIndex"); continue; }
+
         evt_weight_ = 1.;
         MCSFApply();
 
@@ -1135,8 +1140,25 @@ TString Analysis::SetInputFileName(std::string inname)
    }
    
    logger_.Info() << "Original input: " << inname << ", processed name: " << inputName << std::endl;
-   
-   return inputName; 
+
+   return inputName;
+}
+
+bool Analysis::ChannelIndex() const {
+    if (isData) return true;
+    // Only TTbar_Signal is gen-channel-matched right now; every other sample
+    // (backgrounds, and eventually an inclusive "others" split) passes
+    // through untouched until that's wired in separately.
+    if (!TString(FileName_).Contains("TTbar_Signal")) return true;
+    if (!branchReader_.BranchIsAvailable("TopCPVCat_Channel_Idx")) return true;
+
+    int decay_idx = 0;
+    if      (TString(Decaymode).Contains("dielec")) decay_idx = 22;
+    else if (TString(Decaymode).Contains("muel"))   decay_idx = 24;
+    else if (TString(Decaymode).Contains("dimuon")) decay_idx = 26;
+
+    int channel_idx = static_cast<int>(branchReader_.RequiredIntValue("TopCPVCat_Channel_Idx"));
+    return channel_idx == decay_idx;
 }
 
 void Analysis::MCSF()

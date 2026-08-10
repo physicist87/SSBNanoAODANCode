@@ -9,6 +9,19 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <stdexcept>
+
+// Thrown by the Required*() accessors below instead of letting a raw
+// std::unordered_map::at() throw std::out_of_range - gives the actual
+// branch name in the error instead of a bare "map::at" message.
+class MissingBranchError : public std::runtime_error {
+public:
+    explicit MissingBranchError(const std::string& branchName)
+        : std::runtime_error("Required NanoAOD branch not found/bound: " + branchName), branch_(branchName) {}
+    const std::string& Branch() const { return branch_; }
+private:
+    std::string branch_;
+};
 
 // Owns the dynamic branch-name -> TTreeReaderValue/Array bindings for a
 // NanoAOD TChain, and knows how to read them back out in a way that is
@@ -55,10 +68,47 @@ public:
     // Jet_puIdDisc remains (no correctionlib SF yet, not wired in).
     bool JetPuIdAvailable() const { return puidBranchAvailable_; }
 
-    // Maps for dynamic branch storage. Public by design: this class's whole
-    // job is to be a thin, type-aware wrapper around TTreeReader bindings -
-    // hiding them behind another layer of getters/setters that just forward
-    // to the same map lookup would add indirection without adding safety.
+    // Typed required/optional accessors: prefer these over touching the maps
+    // below directly. Required*() throws MissingBranchError (clear branch
+    // name + message) instead of the maps' own .at() throwing a bare
+    // std::out_of_range; Optional*() returns nullptr instead of throwing.
+    // Arrays return a raw pointer (same as the maps' unique_ptr::get()).
+    TTreeReaderArray<Float_t>*  RequiredFloatArray(const std::string& name) const;
+    TTreeReaderArray<Float_t>*  OptionalFloatArray(const std::string& name) const;
+    TTreeReaderArray<Bool_t>*   RequiredBoolArray(const std::string& name) const;
+    TTreeReaderArray<Bool_t>*   OptionalBoolArray(const std::string& name) const;
+    TTreeReaderArray<Int_t>*    RequiredIntArray(const std::string& name) const;
+    TTreeReaderArray<Int_t>*    OptionalIntArray(const std::string& name) const;
+    TTreeReaderArray<UInt_t>*   RequiredUIntArray(const std::string& name) const;
+    TTreeReaderArray<UInt_t>*   OptionalUIntArray(const std::string& name) const;
+    TTreeReaderArray<UChar_t>*  RequiredUCharArray(const std::string& name) const;
+    TTreeReaderArray<UChar_t>*  OptionalUCharArray(const std::string& name) const;
+    TTreeReaderArray<Short_t>*  RequiredShortArray(const std::string& name) const;
+    TTreeReaderArray<Short_t>*  OptionalShortArray(const std::string& name) const;
+
+    // Singles: Ptr variants return the bound TTreeReaderValue (for callers
+    // that hold onto it and dereference per-event, e.g. met_pt); Value
+    // variants dereference immediately and return the plain scalar.
+    TTreeReaderValue<Float_t>* RequiredFloatSingle(const std::string& name) const;
+    TTreeReaderValue<Float_t>* OptionalFloatSingle(const std::string& name) const;
+    Float_t    RequiredFloatValue(const std::string& name) const;
+    Bool_t     RequiredBoolValue(const std::string& name) const;
+    Int_t      RequiredIntValue(const std::string& name) const;
+    UInt_t     RequiredUIntValue(const std::string& name) const;
+    ULong64_t  RequiredULongValue(const std::string& name) const;
+    UChar_t    RequiredUCharValue(const std::string& name) const;
+
+    // Checks BranchIsAvailable() for every name in `required`, prints an
+    // aligned OK/MISSING report, and throws (listing all missing branches
+    // at once) if any are missing - meant to be called once at job start,
+    // right after InitBranches(), so a NanoAOD version/branch-list mismatch
+    // is caught in the first second of the job instead of mid-event-loop.
+    void ValidateRequiredBranches(const std::vector<std::string>& required) const;
+
+    // Maps for dynamic branch storage. Prefer the typed accessors above;
+    // these are kept public for the handful of call sites (InitBranches
+    // itself, GetIntArrayValue's multi-map fallback) that need to touch
+    // more than one map's storage directly.
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Bool_t>>> boolSingles;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<Int_t>>> intSingles;
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderValue<UInt_t>>> uintSingles;

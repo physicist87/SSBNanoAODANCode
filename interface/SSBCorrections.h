@@ -7,10 +7,11 @@
 #include "TLorentzVector.h"
 #include <variant> 
 #include <TFile.h>
-#include <TH2D.h>
+#include <TH2.h>
 #include <TString.h>
 #include "../CorrectionFiles/Rochester/RoccoR.h"
 #include "../CorrectionFiles/METXY/XYMETCorrection_withUL17andUL18andUL16.h"
+#include "DebugTools.h"
 
 using correction::CorrectionSet;
 using correction::CompoundCorrection;
@@ -18,119 +19,58 @@ using correction::CompoundCorrection;
 // Forward declarations
 class TextReader;
 
-// B-tag algorithm identifier - the single canonical enum shared between
-// SSBCorrections.cpp's constructor (tagger-name/eff-filename dispatch) and
-// Analysis.cpp's btag_algo_ member (eff-histogram/file lookup, BTagDiscCut
-// auto-derivation). Previously each file independently re-parsed the
-// Jet_btag config string ("deepJetM", "UParTM", ...) into its own local
-// std::string, and they drifted out of sync once in practice - Analysis.cpp's
-// dispatch stayed on the old "UParT" string after SSBCorrections.cpp moved to
-// "UParTAK4" for the real .root filenames/histogram names, silently falling
-// through to a broken branch (caught before it shipped - see NOTES.md).
-// ParseBTagAlgo()/BTagAlgoToString() are now the only place this mapping is
-// defined, so a future retagger (e.g. a PNet migration) only needs one edit.
+// Canonical b-tag algorithm enum, shared by SSBCorrections.cpp and
+// Analysis.cpp so their Jet_btag string parsing can't drift apart again (it
+// did once - see NOTES.md).
 enum class BTagAlgo { DeepCSV, DeepJet, UParTAK4, CSVv2, Unknown };
 
-// Parses a Jet_btag config string (e.g. "deepJetM", "UParTM", "pfCSVV2L")
-// into the algorithm it names. Looks only at the algorithm portion, not the
-// trailing working-point letter.
+// Parses the algorithm portion of a Jet_btag config string (e.g. "UParTM"),
+// ignoring the trailing working-point letter.
 BTagAlgo ParseBTagAlgo(const std::string& jetBtagConfig);
 
-// Canonical string form of a BTagAlgo - used only where a string is
-// structurally required (b-tag efficiency ROOT filenames
-// "btagEff_<algo>.root", in-file histogram names "eff_<algo>_<flav>_<wp>",
-// and eff_histograms_ map keys). Branching logic should compare the enum
-// directly with == instead of stringifying and comparing.
+// String form of a BTagAlgo, for filenames/histogram names only - compare
+// the enum directly with == elsewhere.
 std::string BTagAlgoToString(BTagAlgo algo);
 
-// A utility class for loading and applying correctionlib-based
-// JEC, JER, and muon scale factors using configuration
+// Loads and applies correctionlib-based JEC, JER, and lepton scale factors.
 class SSBCorrections {
 public:
-    // Constructor using a configuration reader (TextReader)
     explicit SSBCorrections(TextReader* reader, const std::string inputfileName);
-    
-    // Explicit destructor declaration to fix memory management issues
     ~SSBCorrections();
     
     SSBCorrections(const SSBCorrections&) = delete;
     SSBCorrections& operator=(const SSBCorrections&) = delete;
     
-    // jetAlgo/jecLevel default to the NanoAODv15 Puppi-jet values but are
-    // config-driven (JetAlgoTag/JECLevel) so this keeps working if CMS JME's
-    // exact correction-name scheme for the new CAT json turns out to differ,
-    // or if this code is ever pointed at PFchs (v9) input again.
+    // jetAlgo/jecLevel default to NanoAODv15 Puppi but are config-driven so
+    // v9/PFchs input or a different CAT naming scheme still work.
     std::string ExpandJECName(const std::string& base_jec_name, const std::string runPeriod, const std::string& era, bool is_data,
                                const std::string& jetAlgo = "AK4PFPuppi", const std::string& jecLevel = "L1L2L3Res");
-    // Get PU weight for a given nTrueInt and variation
     float GetPUWeight(float nTrueInt, const std::string& variation = "nominal") const;
 
-    // Jet Energy Correction (JEC) factor
     double GetJEC(double eta, double pt, double rho) const;
 
-    // Jet Energy Resolution (JER) sigma. Currently unused elsewhere in this
-    // codebase - fixed to the correct 3-input (eta, pt, rho) evaluate() call
-    // to match jet_jerc.json.gz's PtResolution schema (it previously omitted
-    // rho, unlike SmearJER's internal call, which was already correct).
+    // Unused elsewhere - kept 3-input (eta, pt, rho) to match jet_jerc.json.gz's
+    // PtResolution schema.
     double GetJER(double eta, double pt, double rho) const;
 
-    // Smear JER for a MC jet. Delegates the actual random smearing to CMS
-    // JME's own "JERSmear" correctionlib tool (jer_smear.json.gz, a
-    // correctionlib `hashprng` node) when loaded - this is the officially
-    // recommended approach (see the CMS JERC ApplicationTutorial's
-    // JecApplication.cpp, Applier::jerFactor): it takes (JetPt, JetEta,
-    // GenPt-or-(-1), Rho, EventID, JER resolution, JER SF) and returns a
-    // multiplicative smearing factor directly - reproducibility/seeding is
-    // handled internally by correctionlib, not by us.
-    //
-    // 2026-08 fix: gen_pt is no longer trusted as-is from the caller,
-    // regardless of source (Jet_genJetIdx or a DeltaR rematch). The
-    // JERSmear correctionlib tool's evaluate() schema has no room for gen
-    // eta/phi at all (only the 7 values above) - it cannot itself verify
-    // the match is within the JERC-recommended dR<0.2 cone, so per the
-    // tutorial's own Applier::jerFactor(), that check (dR<0.2 AND
-    // |reco_pt-gen_pt|<3*resolution*reco_pt) must happen in the CALLER,
-    // before gen_pt is ever passed to the tool (or to the in-house
-    // fallback below, which now applies the same two-condition gate
-    // instead of only the pt-consistency half of it). gen_eta/gen_phi are
-    // therefore now required inputs whenever gen_pt >= 0 - pass 0.0/0.0
-    // together with gen_pt = -1.0 for "no gen match" (the eta/phi values
-    // are unused in that case).
+    // Delegates to CMS JME's "JERSmear" tool when loaded, else falls back in-house.
+    // Pass gen_pt=-1.0 for "no match" (eta/phi unused then).
     double SmearJER(double reco_pt, double gen_pt, double gen_eta, double gen_phi,
                      double eta, double phi, double rho,
                      ULong64_t event, const std::string& jer_tag = "nominal") const;
 
-    // Reco/gen matching for JER hybrid smearing. out_eta/out_phi, if
-    // non-null, receive the matched gen jet's eta/phi (needed by SmearJER's
-    // own dR re-validation - see above) - left at their input value if no
-    // match is found (check the return value, not these, for match status).
+    // Reco/gen matching for JER hybrid smearing; out_eta/out_phi receive the
+    // matched gen jet's eta/phi if found (check the return value, not these).
     float MatchGenPt(const TLorentzVector& reco_jet,
                      const std::vector<TLorentzVector>& gen_jets,
                      float maxDR = 0.2,
                      float* out_eta = nullptr,
                      float* out_phi = nullptr) const;
 
-    // Apply JES/JER corrections to build the physics jet collection (pt +
-    // mass). Confirmed against the CMS JERC ApplicationTutorial's
-    // JecApplication.h: the tutorial's Applier class keeps jet-pt/mass
-    // correction (jesFactorNominal()/jerFactor(), which the caller multiplies
-    // into Jet_pt/mass itself) and Type-1 MET correction (correctedMet(), a
-    // fully independent computation from raw quantities) as two SEPARATE
-    // computations - they are not fused into one function/return value.
-    // This function used to also return a "corrected_met" (via an internal
-    // RecomputeMET() call using a non-official raw-vs-corrected delta, plus
-    // -MET propagation missing muon subtraction and the Type-1 jet selection
-    // cut) - that MET value is no longer computed here at all now that MET
-    // always comes from ApplyType1METWithCorrT1 (the function that actually
-    // matches the tutorial's correctedMet() term-for-term). Renamed from
-    // ApplyJetCorrectionsWithMET to reflect that this only returns jets now.
-    // run_number is only actually used when the loaded JEC compound correction
-    // turns out to need it (see jec_needs_run_) - pass the event's "run" branch
-    // value here regardless; it's a no-op for corrections that don't need it.
-    // jerSysTag: "nominal"/"up"/"down" - forwarded to SmearJER()'s jer_tag
-    // param (see there - combines jer_sf_ with jer_sfunc_'s SF uncertainty
-    // as sf*(1+-unc) before smearing). Defaulted so this stays source-compatible
-    // with the one existing call site if it's ever not passed explicitly.
+    // Builds the physics jet collection (pt+mass) via JES/JER only - MET
+    // correction is a separate, independent computation (ApplyType1METWithCorrT1),
+    // per the CMS JERC tutorial's own split. run_number is a no-op unless the
+    // loaded JEC needs it (jec_needs_run_); jerSysTag is "nominal"/"up"/"down".
     std::vector<TLorentzVector> ApplyJetCorrections(
         const std::vector<TLorentzVector>& rawJets,
         const std::vector<float>& rawFactors,
@@ -146,39 +86,8 @@ public:
         const std::string& jerSysTag = "nominal"
     ) const;
 
-    // Type-1 MET recomputation that additionally includes NanoAOD's
-    // CorrT1METJet_ branch (low-pT jets below the Jet_ collection's storage
-    // threshold that NanoAOD stores separately, but which still need to
-    // enter Type-1 MET propagation for it to be complete/correct - see the
-    // CMS JERC tutorial's CollectJetMet::collectInputsForType1Met) and
-    // Jet_/CorrT1METJet_muonSubtrFactor (avoids double-counting a muon's
-    // momentum in MET, since muons are already handled directly in MET
-    // rather than via jet energy).
-    //
-    // This does NOT return corrected physics jets (use
-    // ApplyJetCorrections for that, unaffected by muon subtraction -
-    // muon-subtracting the physics jet collection used for jet
-    // selection/counting would be wrong) - it only returns the recomputed
-    // MET, built as raw_met + sum_over_selected_T1_jets(L1only_no_mu - corrected_no_mu),
-    // confirmed against the CMS JERC ApplicationTutorial's
-    // JecApplication::Applier::correctedMet(): the delta is (L1-only minus
-    // fully-corrected), not (raw minus fully-corrected) - the L1 (pileup-only)
-    // correction is treated as already implicitly reflected in the raw MET.
-    // Only jets passing the Type-1 selection (corrected pt > 15, |eta| < 5.2,
-    // chEmEF+neEmEF < 0.90) contribute - CorrT1METJet_ jets have no EM
-    // fraction branches (definitionally 0, always pass that part).
-    //
-    // JER gen-matching (2026-08 fix): regular Jet_ branch jets now use
-    // Jet_genJetIdx (jetGenJetIndices, same convention/index as
-    // ApplyJetCorrections' genJetIndices) instead of a DeltaR rematch
-    // against genJets - there is no reason for the MET path to disagree
-    // with the physics-jet path about which gen jet a given reco jet
-    // matches, and NanoAOD already provides that match directly.
-    // CorrT1METJet_ jets still use the DeltaR-based MatchGenPt() rematch
-    // internally, since that collection has no genJetIdx branch at all -
-    // this is the same acknowledged-imperfect approach the CMS JERC
-    // tutorial itself uses for these jets, not something specific to this
-    // code.
+    // Type-1 MET including CorrT1METJet_ and muon-subtraction. Returns MET
+    // only, not corrected jets (use ApplyJetCorrections for those).
     TLorentzVector ApplyType1METWithCorrT1(
         double raw_met_pt,
         double raw_met_phi,
@@ -201,12 +110,8 @@ public:
         const std::vector<TLorentzVector>& genJets,
         unsigned int run_number = 0,
         ULong64_t event_number = 0,
-        // Same "nominal"/"up"/"down" tag as ApplyJetCorrections' jerSysTag -
-        // forwarded to the SmearJER() calls inside this function's
-        // accumulate lambda (both the regular-Jet_ loop and the
-        // CorrT1METJet_ loop use the same tag; MET does not support mixing
-        // "smear regular jets nominal, CorrT1 jets up" or similar - one tag
-        // per job, matching every other systematic in this codebase).
+        // Same tag as ApplyJetCorrections' jerSysTag - applies to both the
+        // regular-Jet_ and CorrT1METJet_ loops, no per-collection mixing.
         const std::string& jerSysTag = "nominal"
     ) const;
 
@@ -269,27 +174,15 @@ public:
     float GetPUJetIDSFAndEff(float pt, float eta, bool passPU, bool genMatched, const std::string& wp, const std::string& syst, bool getEff = false) const;
     double RochesterCorrectionData(TString year, int Q, double pt, double eta, double phi, int s,int m) const;
     double RochesterCorrectionMC(TString year, int Q, double pt, double eta,double phi,int genID,double genPt,int nl, int s,int m) const;
-    // chEmEF/neEmEF added per the CMS JERC tutorial's JvmApplication::VetoChecker
-    // (kMaxEmFrac = 0.90) - jets with (chEmEF+neEmEF) >= 0.90 should not be
-    // evaluated against the veto map at all. pt/jetId pre-selection (the
-    // tutorial's kMinPt=15, kMinJetId=6/TightLepVeto) are NOT re-checked here
-    // since the only call site (Analysis::JetSelector) already applies a
-    // tighter pt cut and PassConfiguredJetId() before calling this.
+    // EM-fraction veto cut only (kMaxEmFrac=0.90) - pt/jetId pre-selection
+    // is already applied by the only caller, Analysis::JetSelector.
     bool ShouldVetoJet(const TLorentzVector& jet, double chEmEF = 0.0, double neEmEF = 0.0) const;
     std::string GetJetVetoType() const;
     void InitBtagSFCorrection(const std::string& json_path, const std::string& tagger_name);
     float GetBtagSF(float pt, float eta, int flav, const std::string& wp, const std::string& syst = "nominal") const;
-    // Looks up the numeric discriminant cut for a working point directly from
-    // btagging.json.gz's "<tagger>_wp_values" correction (confirmed present
-    // for UParTAK4: "UParTAK4_wp_values", evaluate({wp}) with the same
-    // single-letter "L"/"M"/"T" wp string already used successfully by
-    // GetBtagSF's own evaluate() call against this same json). Lets
-    // Jet_btag="UParTM" alone determine the cut instead of also requiring a
-    // manually-copied "BTagDiscCut" config value. Returns -1.0 (a value that
-    // fails every real cut) if the correction isn't loaded or evaluate()
-    // fails for any reason - callers should treat that as "lookup didn't
-    // work, fall back to requiring an explicit BTagDiscCut", not as a valid
-    // (if permissive) cut of -1.0.
+    // Numeric discriminant cut for a WP from btagging.json.gz's wp_values
+    // correction. Returns -1.0 (fails every cut) if unavailable - caller
+    // should fall back to an explicit BTagDiscCut, not treat -1.0 as valid.
     double GetBtagWPCut(const std::string& wp) const;
     //void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo);
     void LoadMCBtagEfficiencies(const std::string& filepath, const std::string& algo, const std::string& wp);
@@ -303,6 +196,10 @@ public:
                              const std::string& syst = "nominal") const;
 
 private:
+    // mutable: most logging call sites are inside const member functions,
+    // and Logger's stream methods aren't const.
+    mutable Logger logger_;
+
     std::string year_;
     std::string jveto_name_; // correction name (e.g., "Summer19UL18_V1") 
     std::string jveto_key_;  // veto map key (e.g., "jetvetomap", "hem1516")
@@ -311,7 +208,13 @@ private:
 
     // Trigger variables
     double GetTrgEff(double pt1, double pt2, TString Sys_);
-    TH2D* H_trig;    
+    // Owned; cloned out of the trigger SF file and detached via
+    // SetDirectory(nullptr) at load time (see constructor), so it outlives
+    // the TFile it was read from and is cleaned up automatically. TH2 (not
+    // TH2D) because the actual file stores TH2F - GetBinContent/GetXaxis/
+    // FindBin/GetBinError are all virtual on the common TH1/TH2 base, so
+    // this works regardless of the concrete histogram type.
+    std::unique_ptr<TH2> H_trig;
     
     // Rochester correction
     RoccoR rc;
@@ -327,44 +230,21 @@ private:
     std::shared_ptr<const correction::Correction> ele_reco_sf_;
     std::shared_ptr<const correction::Correction> jetvetomap_;
     std::shared_ptr<const correction::CompoundCorrection> jec_;
-    // Detected once at construction (see cpp): the v15 Puppi-jet DATA compound
-    // JEC correction (per the CAT jet_jerc.json.gz) appears to take a 5th
-    // "run" input in addition to (area, eta, pt, rho) - unlike the old v9/
-    // PFchs scheme, which encoded the era directly in the correction name
-    // instead. jec_needs_run_ lets GetCorrectedJetPt/Mass build the right
-    // number of evaluate() arguments without hardcoding which schema is in use.
+    // Whether the loaded JEC compound takes a 5th "run" input (v15 Puppi
+    // DATA does; detected once at construction - see cpp).
     bool jec_needs_run_ = false;
-    // L1FastJet-only correction (single, not compound) - needed as the Type-1
-    // MET baseline (see RecomputeMET/GetL1CorrectedJetPt). Loaded from the
-    // same jet_jerc.json.gz/jec_name base as jec_, just with jecLevel
-    // ="L1FastJet" instead of "L1L2L3Res".
+    // L1FastJet-only correction (Type-1 MET baseline); same base as jec_,
+    // jecLevel="L1FastJet".
     std::shared_ptr<const correction::Correction> jec_l1_;
     std::shared_ptr<const correction::Correction> jer_;
     std::shared_ptr<const correction::Correction> jer_sf_; // JER Scale factor - evaluate({eta, pt}), confirmed 2-input (not {eta, syst})
     std::shared_ptr<const correction::Correction> jer_sfunc_; // JER SF uncertainty - evaluate({eta, pt}); combined arithmetically as sf*(1+-unc) for up/down, not a separate correction per variation
-    // CMS JME's official "JERSmear" correctionlib tool (jer_smear.json.gz) -
-    // does the actual hybrid-method/stochastic JER smearing internally via a
-    // `hashprng` node, given (pt, eta, genPt-or-(-1), rho, eventID,
-    // resolution, sf). Optional/nullable: if this file isn't available for a
-    // given campaign, SmearJER() falls back to an in-house implementation
-    // (see cpp) - loudly warned once, since that fallback is not the
-    // officially recommended approach.
+    // CMS's official JER smearing tool; optional - SmearJER() falls back
+    // in-house (with a warning) if unavailable.
     std::shared_ptr<const correction::Correction> jer_smear_;
-    // JES full-uncertainty-set systematic (2026-08). Config-driven, resolved
-    // once at construction from JESSys (a CMS-style NP name, e.g.
-    // "CMS_scale_j_AbsoluteScale" or "CMS_scale_j_Total") + JESSysDir
-    // ("up"/"down") via the LookupJesFullSetUncertaintyKey() table in
-    // SSBCorrections.cpp (sourced from the official JERC tutorial's
-    // JecConfigAK4.json, not derived by string-substitution). nullptr/empty
-    // means "no JES systematic requested" - GetCorrectedJetPt() checks this
-    // and is a no-op multiplier (factor 1.0) in that case, same as every
-    // other optional correction in this class. Applying the shift inside
-    // GetCorrectedJetPt() itself (rather than threading it through
-    // ApplyJetCorrections()/ApplyType1METWithCorrT1() as an extra parameter,
-    // the way JER's jerSysTag works) means it automatically reaches both the
-    // physics jet path AND the Type-1 MET path - both call GetCorrectedJetPt()
-    // for their "fully corrected" pt - matching the tutorial's requirement
-    // that a JES variation apply consistently to both.
+    // JES full-uncertainty-set systematic, resolved from JESSys/JESSysDir at
+    // construction. nullptr = no JES systematic; applied inside
+    // GetCorrectedJetPt() so both the jet and MET paths pick it up.
     std::shared_ptr<const correction::Correction> jes_unc_source_;
     std::string jes_sys_dir_; // "up" or "down"; only meaningful if jes_unc_source_ is loaded
     std::shared_ptr<const correction::Correction> pujetid_sf_; // PU JetID SF
@@ -379,8 +259,10 @@ private:
     std::string getBtagCorrectionName(int flavor) const;
     std::string GetProcessSubDir(const std::string& inputfileName) const;
     
-    // Primary cause of segmentation fault - TH2D pointers need manual cleanup
-    std::map<std::string, TH2D*> eff_histograms_;
+    // Owned MC b-tag efficiency histograms; unique_ptr means no manual
+    // delete loop in the destructor and no dangling/double-free risk.
+    // TH2 (not TH2D) for the same reason as H_trig above.
+    std::map<std::string, std::unique_ptr<TH2>> eff_histograms_;
     
     std::shared_ptr<const correction::Correction> metphi_corr_;
 };
