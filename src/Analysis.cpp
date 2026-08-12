@@ -730,8 +730,15 @@ void Analysis::Loop() {
         return;
     }
 
-    Long64_t nEntries = chain->GetEntries();
+    // Use the TTreeReader's own entry count instead of chain->GetEntries():
+    // for a TChain of remote (xrootd) files, chain->GetEntries() has to
+    // LoadTree() each file itself to tally entries, which silently moves the
+    // TChain's "current tree" pointer. When fReader.Next() later crosses that
+    // same file boundary it notices the tree already changed once and prints
+    // a harmless "SetEntryBase()" warning. Routing the count through the
+    // reader keeps its internal bookkeeping in sync and avoids the warning.
     fReader.Restart(); // Reset the reader to the beginning
+    Long64_t nEntries = fReader.GetEntries(true);
 
     MCSF();
 

@@ -1,6 +1,7 @@
 #include "../interface/SSBCorrections.h"
 #include "../TextReader/TextReader.hpp"
 #include <fstream>
+#include <sstream>
 #include <cstdlib>
 #include "correction.h"
 #include "TRandom3.h"
@@ -316,25 +317,25 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
     auto jec_set = correction::CorrectionSet::from_file(jsonDir + jec_path);
     jec_ = jec_set->compound().at(jec_name);
 
-    // Probe whether this compound correction needs a 5th "run" input (v15
+    // Determine whether this compound correction needs a 5th "run" input (v15
     // Puppi DATA does; MC and old v9/PFchs bake era into the name instead).
+    // Read this from the correction's own schema (inputs()) instead of trial-
+    // evaluating with dummy values: a dummy run like "1" is always outside a
+    // run-binned correction's valid range and throws a Binning bounds error
+    // that looks just like a "wrong signature" failure, so probing can
+    // misdetect a genuine 5-input (DATA) correction as 4-input (MC-only).
     jec_needs_run_ = false;
-    try {
-        jec_->evaluate({1.0, 0.0, 30.0, 10.0});
-    } catch (const std::exception&) {
-        try {
-            jec_->evaluate({1.0, 0.0, 30.0, 10.0, 1});
-            jec_needs_run_ = true;
-            logger_.Info() << "JEC compound correction '" << jec_name
-                      << "' expects a 5th 'run' input (detected automatically) - "
-                      << "will pass the event run number to it." << std::endl;
-        } catch (const std::exception& e2) {
-            logger_.Warning() << "JEC compound correction '" << jec_name
-                      << "' probe failed for both the 4-input (area,eta,pt,rho) and "
-                      << "5-input (+run) signatures: " << e2.what()
-                      << ". JEC corrections may not evaluate correctly - check jec_name "
-                      << "against your jet_jerc.json.gz." << std::endl;
+    {
+        const auto& jec_inputs = jec_->inputs();
+        std::ostringstream oss;
+        for (const auto& var : jec_inputs) {
+            oss << var.name() << " ";
+            if (var.name() == "run") jec_needs_run_ = true;
         }
+        logger_.Info() << "JEC compound correction '" << jec_name << "' declares "
+                  << jec_inputs.size() << " input(s): " << oss.str()
+                  << (jec_needs_run_ ? "- 'run' present, will pass the event run number."
+                                      : "- no 'run' input.") << std::endl;
     }
 
     // L1FastJet-only correction - Type-1 MET baseline, same file as jec_.
@@ -590,7 +591,7 @@ SSBCorrections::~SSBCorrections() {
 
 double SSBCorrections::GetCorrectedJetPt(double raw_pt, double eta, double area, double rho, unsigned int run_number) const {
     double sf = jec_needs_run_
-        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<int>(run_number)})
+        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<double>(run_number)})
         : jec_->evaluate({area, eta, raw_pt, rho});
     double corrected_pt = raw_pt * sf;
 
@@ -617,7 +618,7 @@ double SSBCorrections::GetL1CorrectedJetPt(double raw_pt, double eta, double are
 double SSBCorrections::GetCorrectedJetMass(double raw_mass, double raw_pt, double eta, double area, double rho, unsigned int run_number) const {
     //double sf = jec_->evaluate({eta, raw_pt, area});
     double sf = jec_needs_run_
-        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<int>(run_number)})
+        ? jec_->evaluate({area, eta, raw_pt, rho, static_cast<double>(run_number)})
         : jec_->evaluate({area, eta, raw_pt, rho});
     return raw_mass * sf;
 }

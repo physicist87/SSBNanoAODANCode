@@ -89,9 +89,6 @@ int main(int argc, char **argv)
     }
 
 
-    std::vector<double> genentries_pertree;
-    std::vector<double> entries_pertree;
-
     if (filelist == NULL)
     {
         logger.Error() << "no filelist " << filelistPath << std::endl;
@@ -105,11 +102,22 @@ int main(int argc, char **argv)
     while (fscanf(filelist, "%s", filename) != EOF)
     {
        logger.Info() << "adding: " << filename << std::endl;
+       // Note: only Add() here, no per-file GetEntries() call. TChain::GetEntries()
+       // has to LoadTree() the file it's called on, and doing that once per file
+       // (10x here) leaves the chain's "current tree" pointer in a state that
+       // later confuses the TTreeReader in Analysis::Loop() - it crosses that
+       // same file boundary during the real event loop and, finding the tree
+       // already switched once behind its back, prints a harmless but noisy
+       // "SetEntryBase()" warning. The per-file counts were unused anyway
+       // (dead code - entries_pertree was never read).
        ch->Add(filename, 0);
-       entries_pertree.push_back(ch->GetEntries());
     }
     fclose(filelist);
     logger.Info() << "Total number of events after merging root files: " << ch->GetEntries() << std::endl;
+    // Reset the chain back to the first file/entry so the TTreeReader that
+    // Analysis attaches next starts from a clean, agreed-upon state instead
+    // of wherever GetEntries() above last landed.
+    ch->LoadTree(0);
 
     // Analysis only observes the TChain (see interface/Analysis.h) - ch.get()
     // keeps ownership here, in main, for the lifetime of the job.
@@ -120,4 +128,3 @@ int main(int argc, char **argv)
 
    return 0;
 }
-
