@@ -12,7 +12,7 @@ echo "[INFO] Channels  = $Channels"
 
 # List of input samples in the form: "Directory/FileBase"
 inputlists=(
-    "TTbar_Signal_1"
+    #"TTbar_Signal_1"
     #"Data_SingleMuon_Run2017C/Data_SingleMuon_Run2017C_1"
     #"Data_SingleMuon_Run2017E/Data_SingleMuon_Run2017E_1"
     #"Data_SingleMuon_Run2017F/Data_SingleMuon_Run2017F_1"
@@ -22,6 +22,7 @@ inputlists=(
     #"Data_DoubleMuon_Run2018A/Data_DoubleMuon_Run2018A_1"
     #"Data_SingleMuon_Run2018A/Data_SingleMuon_Run2018A_1"
     #"Data_SingleMuon_Run2018A/Data_SingleMuon_Run2018A_1"
+    "Data_SingleMuon_Run2018A_1"
     #"TTbar_Signal/TTbar_Signal_1"
 )
 config="dimuon_Data_RunCtoF.config"

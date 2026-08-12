@@ -78,13 +78,16 @@ int main(int argc, char **argv)
     // Merge input files into a single TChain
     FILE *filelist;
     char filename[1000];
-    //string filelistDir, filelistName, filelistPath;
-
-
-    filelistName = argv[1];
+    
     std::string filelistPath = argv[1];
     std::string filelistName = filelistPath;
     filelist = fopen(filelistPath.c_str(), "r");
+    if (filelist == nullptr) {
+	    logger.Error() << "Cannot open input file list: " 
+		    << filelistPath << std::endl;
+	    return 1;
+    }
+
 
     std::vector<double> genentries_pertree;
     std::vector<double> entries_pertree;
