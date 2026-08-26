@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from collections import defaultdict
 
 
 # ============================================================
@@ -25,17 +26,26 @@ SUBMIT_BASE = CONDOR_DIR / "condorSubmit"
 
 
 # ============================================================
+# User
+# ============================================================
+
+USER_ID = os.environ.get("USER") or os.getlogin()
+
+
+# ============================================================
 # External InputList locations
 # ============================================================
 
 INPUT_LIST_BASE = {
+
     "UL2018": Path(
-        "/u/user/sha/Develop/CPviolation/SSB/AnalysisCode/"
+        f"/u/user/{USER_ID}/Develop/CPviolation/SSB/AnalysisCode/"
         "NanoAODNtuple_v1/NtupleList_v1/"
         "2018_v6-FromGuks/FileList/InputList"
     ),
 
-    # Later:
+    # Add later:
+    #
     # "UL2017": Path("..."),
     # "UL2016PreVFP": Path("..."),
     # "UL2016PostVFP": Path("..."),
@@ -43,52 +53,80 @@ INPUT_LIST_BASE = {
 
 
 # ============================================================
-# Data filtering
+# Data utilities
 # ============================================================
 
 def is_data_sample(sample: str) -> bool:
     return sample.startswith("Data_")
 
 
-def is_sample_for_channel(sample: str, channel: str, run_period: str) -> bool:
-    """
-    Keep only data datasets relevant for the selected channel.
-    MC samples always pass.
-    """
+def is_sample_for_channel(
+    sample: str,
+    channel: str,
+    run_period: str,
+) -> bool:
 
     if not is_data_sample(sample):
         return True
 
-    dimuon_list = ["SingleMuon", "DoubleMuon"]
-    dielec_list = ["SingleElectron", "DoubleEG"]
-    muelec_list = ["SingleMuon", "SingleElectron", "MuonEG"]
+    dimuon_list = [
+        "SingleMuon",
+        "DoubleMuon",
+    ]
+
+    dielec_list = [
+        "SingleElectron",
+        "DoubleEG",
+    ]
+
+    muelec_list = [
+        "SingleMuon",
+        "SingleElectron",
+        "MuonEG",
+    ]
 
     if run_period == "UL2018":
-        # Keep compatibility with possible EGamma-style samples.
-        dielec_list = ["EGamma", "SingleElectron", "DoubleEG"]
-        muelec_list = ["SingleMuon", "EGamma", "SingleElectron", "MuonEG"]
+
+        dielec_list = [
+            "EGamma",
+            "SingleElectron",
+            "DoubleEG",
+        ]
+
+        muelec_list = [
+            "SingleMuon",
+            "EGamma",
+            "SingleElectron",
+            "MuonEG",
+        ]
 
     if channel == "MuMu":
         allowed = dimuon_list
+
     elif channel == "ElEl":
         allowed = dielec_list
+
     elif channel == "MuEl":
         allowed = muelec_list
+
     else:
         return False
 
-    return any(token in sample for token in allowed)
+    return any(
+        token in sample
+        for token in allowed
+    )
 
 
 # ============================================================
 # Config / branch-list mapping
 # ============================================================
 
-def get_job_config(run_period: str, channel: str, sample: str):
-    """
-    Determine config and branch-list files.
-    Start from the mapping used in the previous unified submitter.
-    """
+def get_job_config(
+    run_period: str,
+    channel: str,
+    sample: str,
+):
 
     config_map = {
         "MuMu": "dimuon.config",
@@ -98,16 +136,9 @@ def get_job_config(run_period: str, channel: str, sample: str):
 
     config_file = config_map[channel]
 
-    # Current NanoAOD v15 branch list
-    branch_list = f"{run_period}/branch_list_v15.txt"
-
-    # Preserve room for special year/data mappings later.
-    #
-    # Example:
-    #
-    # if run_period == "UL2017" and sample.startswith("Data_"):
-    #     ...
-    #
+    branch_list = (
+        f"{run_period}/branch_list_v15.txt"
+    )
 
     return config_file, branch_list
 
@@ -117,27 +148,18 @@ def get_job_config(run_period: str, channel: str, sample: str):
 # ============================================================
 
 def create_package_tarball():
-    """
-    Create SSBNanoAODANCode.tar.gz immediately before submission.
-
-    Excluded:
-      - input
-      - output
-      - CondorJobs
-      - .git
-      - local build products
-      - common temporary files
-
-    Everything else is included by default so that runtime
-    correction/config/data dependencies are not accidentally omitted.
-    """
 
     print("=" * 70)
     print("[PACKAGE] Creating analysis tarball")
     print("=" * 70)
 
     if TARBALL_PATH.exists():
-        print(f"[INFO] Removing old tarball: {TARBALL_PATH}")
+
+        print(
+            f"[INFO] Removing old tarball: "
+            f"{TARBALL_PATH}"
+        )
+
         TARBALL_PATH.unlink()
 
     cmd = [
@@ -145,14 +167,19 @@ def create_package_tarball():
         "-czf",
         str(TARBALL_PATH),
 
+        # Local/runtime directories not needed on worker
         f"--exclude={PACKAGE_NAME}/input",
         f"--exclude={PACKAGE_NAME}/output",
         f"--exclude={PACKAGE_NAME}/CondorJobs",
+
+        # Git
         f"--exclude={PACKAGE_NAME}/.git",
 
+        # Local build products
         f"--exclude={PACKAGE_NAME}/*.o",
         f"--exclude={PACKAGE_NAME}/ssb_analysis",
 
+        # Temporary files
         f"--exclude={PACKAGE_NAME}/.DS_Store",
         f"--exclude={PACKAGE_NAME}/__pycache__",
         f"--exclude={PACKAGE_NAME}/*.pyc",
@@ -160,32 +187,43 @@ def create_package_tarball():
         PACKAGE_NAME,
     ]
 
+    print(
+        f"[INFO] Package directory : "
+        f"{PACKAGE_DIR}"
+    )
+
+    print(
+        f"[INFO] Output tarball    : "
+        f"{TARBALL_PATH}"
+    )
+
     subprocess.run(
         cmd,
         cwd=PACKAGE_DIR.parent,
         check=True,
     )
 
-    size_mb = TARBALL_PATH.stat().st_size / (1024 * 1024)
+    size_mb = (
+        TARBALL_PATH.stat().st_size
+        / (1024 * 1024)
+    )
 
-    print(f"[INFO] Tarball : {TARBALL_PATH}")
-    print(f"[INFO] Size    : {size_mb:.1f} MB")
+    print(
+        f"[INFO] Tarball created successfully: "
+        f"{size_mb:.1f} MB"
+    )
+
     print("=" * 70)
 
 
 # ============================================================
-# Collect list files
+# Collect normal jobs from InputList
 # ============================================================
 
-def collect_input_lists(sample_dir: Path, sample: str):
-    """
-    Collect files matching:
-
-        SAMPLE/SAMPLE_<number>.list
-
-    Returns:
-        [(number, full_path), ...]
-    """
+def collect_input_lists(
+    sample_dir: Path,
+    sample: str,
+):
 
     jobs = []
 
@@ -196,26 +234,230 @@ def collect_input_lists(sample_dir: Path, sample: str):
         rf"^{re.escape(sample)}_(\d+)\.list$"
     )
 
-    for path in sorted(sample_dir.glob("*.list")):
-        match = pattern.match(path.name)
+    for path in sorted(
+        sample_dir.glob("*.list")
+    ):
+
+        match = pattern.match(
+            path.name
+        )
 
         if not match:
             continue
 
-        job_number = int(match.group(1))
-        jobs.append((job_number, path))
+        job_number = int(
+            match.group(1)
+        )
 
-    return jobs
+        jobs.append(
+            (
+                job_number,
+                path.resolve(),
+            )
+        )
+
+    return sorted(
+        jobs,
+        key=lambda x: x[0],
+    )
+
+
+# ============================================================
+# Read bad-job file
+#
+# Expected format from check_jobs_v1.py:
+#
+# SAMPLE JOB_NUMBER STATUS INPUT_LIST_PATH
+#
+# Example:
+#
+# TTZToLLNuNu 27 RUNNING /.../TTZToLLNuNu_27.list
+# TTbar_AllHadronic 141 RUNNING /.../TTbar_AllHadronic_141.list
+# ============================================================
+
+def read_bad_jobs(
+    bad_jobs_file: Path,
+):
+
+    if not bad_jobs_file.is_file():
+
+        print(
+            "[ERROR] Bad-job file not found:"
+        )
+
+        print(
+            f"        {bad_jobs_file}"
+        )
+
+        sys.exit(1)
+
+    jobs_by_sample = defaultdict(list)
+
+    print("=" * 70)
+    print("[BAD-JOB MODE]")
+    print("=" * 70)
+
+    print(
+        f"[INFO] Reading bad-job file:"
+    )
+
+    print(
+        f"       {bad_jobs_file}"
+    )
+
+    with bad_jobs_file.open() as f:
+
+        for line_number, line in enumerate(
+            f,
+            start=1,
+        ):
+
+            line = line.strip()
+
+            if not line:
+                continue
+
+            if line.startswith("#"):
+                continue
+
+            parts = line.split(
+                maxsplit=3
+            )
+
+            if len(parts) != 4:
+
+                print(
+                    f"[WARNING] Invalid line "
+                    f"{line_number}:"
+                )
+
+                print(
+                    f"          {line}"
+                )
+
+                continue
+
+            sample = parts[0]
+            job_number_text = parts[1]
+            status = parts[2]
+            input_list_text = parts[3]
+
+            try:
+
+                job_number = int(
+                    job_number_text
+                )
+
+            except ValueError:
+
+                print(
+                    f"[WARNING] Invalid job number "
+                    f"at line {line_number}: "
+                    f"{job_number_text}"
+                )
+
+                continue
+
+            input_list = Path(
+                input_list_text
+            )
+
+            if not input_list.is_file():
+
+                print(
+                    f"[ERROR] Input list from "
+                    f"bad-job file does not exist:"
+                )
+
+                print(
+                    f"        {input_list}"
+                )
+
+                sys.exit(1)
+
+            jobs_by_sample[
+                sample
+            ].append(
+                (
+                    job_number,
+                    input_list.resolve(),
+                )
+            )
+
+            print(
+                f"[BAD] {sample:<45} "
+                f"job={job_number:<5} "
+                f"previous_status={status}"
+            )
+
+    # Remove duplicate job numbers
+    # and sort each sample.
+
+    cleaned = {}
+
+    for sample, jobs in jobs_by_sample.items():
+
+        unique_jobs = {}
+
+        for job_number, input_list in jobs:
+
+            unique_jobs[
+                job_number
+            ] = input_list
+
+        cleaned[sample] = sorted(
+            unique_jobs.items(),
+            key=lambda x: x[0],
+        )
+
+    total = sum(
+        len(jobs)
+        for jobs in cleaned.values()
+    )
+
+    print("-" * 70)
+
+    print(
+        f"[INFO] Samples to resubmit : "
+        f"{len(cleaned)}"
+    )
+
+    print(
+        f"[INFO] Jobs to resubmit    : "
+        f"{total}"
+    )
+
+    print("=" * 70)
+
+    if total == 0:
+
+        print(
+            "[INFO] No bad jobs found. "
+            "Nothing to submit."
+        )
+
+        sys.exit(0)
+
+    return cleaned
 
 
 # ============================================================
 # Condor submission
 # ============================================================
 
-def submit_condor(jdl_path: Path):
-    cmd = ["condor_submit", str(jdl_path)]
+def submit_condor(
+    jdl_path: Path,
+):
 
-    print(f"[INFO] Running: {' '.join(cmd)}")
+    cmd = [
+        "condor_submit",
+        str(jdl_path),
+    ]
+
+    print(
+        f"[INFO] Running: "
+        f"{' '.join(cmd)}"
+    )
 
     subprocess.run(
         cmd,
@@ -233,7 +475,13 @@ def generate_sample_jdl(
     jobs,
     config_file,
     branch_list,
+    is_resubmit=False,
 ):
+
+    # --------------------------------------------------------
+    # Directory layout
+    # --------------------------------------------------------
+
     submit_dir = (
         SUBMIT_BASE
         / args.study
@@ -249,72 +497,154 @@ def generate_sample_jdl(
         / sample
     )
 
-    submit_dir.mkdir(parents=True, exist_ok=True)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    submit_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    jdl_path = submit_dir / f"{sample}.sub"
+    log_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    #
-    # Queue file contains:
+    # --------------------------------------------------------
+    # Filename
+    # --------------------------------------------------------
+
+    if is_resubmit:
+
+        jdl_path = (
+            submit_dir
+            / f"{sample}_resubmit.sub"
+        )
+
+        queue_file = (
+            submit_dir
+            / f"{sample}_resubmit.queue"
+        )
+
+    else:
+
+        jdl_path = (
+            submit_dir
+            / f"{sample}.sub"
+        )
+
+        queue_file = (
+            submit_dir
+            / f"{sample}.queue"
+        )
+
+    # --------------------------------------------------------
+    # Queue file
     #
     # JobId InputListPath InputListName
-    #
-    queue_file = submit_dir / f"{sample}.queue"
+    # --------------------------------------------------------
 
     with queue_file.open("w") as f:
+
         for job_number, list_path in jobs:
+
             f.write(
                 f"{job_number} "
                 f"{list_path} "
                 f"{list_path.name}\n"
             )
 
+    # --------------------------------------------------------
+    # JDL
+    # --------------------------------------------------------
+
     with jdl_path.open("w") as f:
 
-        f.write("Universe = vanilla\n")
-        f.write(f"Executable = {RUN_SCRIPT}\n")
+        f.write(
+            "Universe = vanilla\n"
+        )
 
         f.write(
-            f"Log = {log_dir}/{sample}_$(JobId).log\n"
-        )
-        f.write(
-            f"Output = {log_dir}/{sample}_$(JobId).out\n"
-        )
-        f.write(
-            f"Error = {log_dir}/{sample}_$(JobId).err\n"
+            f"Executable = {RUN_SCRIPT}\n"
         )
 
         f.write("\n")
 
-        # KNU resources: start conservatively.
-        f.write("RequestCpus = 1\n")
-        f.write("RequestMemory = 4 GB\n")
-        f.write("RequestDisk = 10 GB\n")
+        # ----------------------------------------------------
+        # Use the same log filenames as original jobs.
+        #
+        # check_jobs_v1.py uses the LAST Condor termination
+        # record, so resubmissions are handled correctly.
+        # ----------------------------------------------------
 
-        f.write('+JobType = "short"\n')
+        f.write(
+            f"Log = "
+            f"{log_dir}/{sample}_$(JobId).log\n"
+        )
+
+        f.write(
+            f"Output = "
+            f"{log_dir}/{sample}_$(JobId).out\n"
+        )
+
+        f.write(
+            f"Error = "
+            f"{log_dir}/{sample}_$(JobId).err\n"
+        )
 
         f.write("\n")
 
-        f.write("should_transfer_files = YES\n")
-        f.write("when_to_transfer_output = ON_EXIT\n")
-        f.write("use_x509userproxy = true\n")
+        # ----------------------------------------------------
+        # Resources
+        # ----------------------------------------------------
 
-        #
-        # Important:
-        #
-        # Do NOT transfer the output ROOT file back to the UI.
-        # run_condor_v1.sh performs direct xrdcp stage-out.
-        #
-        f.write("transfer_output_files = \"\"\n")
+        f.write(
+            "RequestCpus = 1\n"
+        )
+
+        f.write(
+            "RequestMemory = 4 GB\n"
+        )
+
+        f.write(
+            "RequestDisk = 10 GB\n"
+        )
+
+        f.write(
+            '+JobType = "short"\n'
+        )
 
         f.write("\n")
 
+        # ----------------------------------------------------
+        # Condor file transfer
+        # ----------------------------------------------------
+
+        f.write(
+            "should_transfer_files = YES\n"
+        )
+
+        f.write(
+            "when_to_transfer_output = ON_EXIT\n"
+        )
+
+        f.write(
+            "use_x509userproxy = true\n"
+        )
+
+        # Output ROOT is sent directly from worker to SE
+        # using xrdcp in run_condor_v1.sh.
+
+        f.write(
+            'transfer_output_files = ""\n'
+        )
+
+        f.write("\n")
+
+        # ----------------------------------------------------
+        # Input transfer
         #
-        # Per-job transfer:
-        #
-        #   SSBNanoAODANCode.tar.gz
-        #   one .list file
-        #
+        # 1. Analysis package tarball
+        # 2. One input .list file
+        # ----------------------------------------------------
+
         f.write(
             "transfer_input_files = "
             f"{TARBALL_PATH},$(InputListPath)\n"
@@ -322,9 +652,10 @@ def generate_sample_jdl(
 
         f.write("\n")
 
-        #
-        # run_condor_v1.sh arguments
-        #
+        # ----------------------------------------------------
+        # Worker arguments
+        # ----------------------------------------------------
+
         f.write(
             "Arguments = "
             f"\"{args.run_period} "
@@ -339,12 +670,129 @@ def generate_sample_jdl(
 
         f.write("\n")
 
+        # ----------------------------------------------------
+        # Queue
+        # ----------------------------------------------------
+
         f.write(
-            "Queue JobId, InputListPath, InputListName "
+            "Queue "
+            "JobId, InputListPath, InputListName "
             f"from {queue_file}\n"
         )
 
-    return jdl_path
+    return jdl_path, queue_file
+
+
+# ============================================================
+# Normal sample selection
+# ============================================================
+
+def select_samples(
+    args,
+    input_base: Path,
+):
+
+    all_samples = sorted(
+        p.name
+        for p in input_base.iterdir()
+        if p.is_dir()
+    )
+
+    if "all" in args.samples:
+
+        samples = all_samples
+
+    elif "data" in args.samples:
+
+        samples = [
+            sample
+            for sample in all_samples
+            if is_data_sample(sample)
+        ]
+
+    elif "mc" in args.samples:
+
+        samples = [
+            sample
+            for sample in all_samples
+            if not is_data_sample(sample)
+        ]
+
+    else:
+
+        samples = args.samples
+
+    samples = [
+        sample
+        for sample in samples
+        if is_sample_for_channel(
+            sample,
+            args.channel,
+            args.run_period,
+        )
+    ]
+
+    return samples
+
+
+# ============================================================
+# Normal submission mode
+# ============================================================
+
+def prepare_normal_jobs(
+    args,
+    input_base: Path,
+):
+
+    samples = select_samples(
+        args,
+        input_base,
+    )
+
+    jobs_by_sample = {}
+
+    for sample in samples:
+
+        sample_dir = (
+            input_base
+            / sample
+        )
+
+        if not sample_dir.is_dir():
+
+            print(
+                f"[WARNING] Sample directory "
+                f"does not exist:"
+            )
+
+            print(
+                f"          {sample_dir}"
+            )
+
+            continue
+
+        jobs = collect_input_lists(
+            sample_dir,
+            sample,
+        )
+
+        if not jobs:
+
+            print(
+                f"[WARNING] No valid .list files "
+                f"found: {sample}"
+            )
+
+            continue
+
+        if args.test:
+            jobs = jobs[:1]
+
+        jobs_by_sample[
+            sample
+        ] = jobs
+
+    return jobs_by_sample
 
 
 # ============================================================
@@ -353,132 +801,283 @@ def generate_sample_jdl(
 
 def run(args):
 
-    if args.run_period not in INPUT_LIST_BASE:
+    # --------------------------------------------------------
+    # Validate run period
+    # --------------------------------------------------------
+
+    if (
+        args.run_period
+        not in INPUT_LIST_BASE
+    ):
+
         print(
-            f"[ERROR] InputList base path is not configured "
-            f"for {args.run_period}"
+            "[ERROR] InputList base path "
+            f"is not configured for "
+            f"{args.run_period}"
         )
+
         sys.exit(1)
 
-    input_base = INPUT_LIST_BASE[args.run_period]
-
-    if not input_base.is_dir():
-        print(f"[ERROR] InputList directory not found:")
-        print(f"        {input_base}")
-        sys.exit(1)
-
-    if not RUN_SCRIPT.is_file():
-        print(f"[ERROR] run_condor_v1.sh not found:")
-        print(f"        {RUN_SCRIPT}")
-        sys.exit(1)
-
-    #
-    # Create package once per invocation.
-    #
-    create_package_tarball()
-
-    #
-    # Determine requested samples
-    #
-    all_samples = sorted(
-        p.name
-        for p in input_base.iterdir()
-        if p.is_dir()
+    input_base = (
+        INPUT_LIST_BASE[
+            args.run_period
+        ]
     )
 
-    if "all" in args.samples:
-        samples = all_samples
+    if not input_base.is_dir():
+
+        print(
+            "[ERROR] InputList directory "
+            "not found:"
+        )
+
+        print(
+            f"        {input_base}"
+        )
+
+        sys.exit(1)
+
+    # --------------------------------------------------------
+    # Worker script
+    # --------------------------------------------------------
+
+    if not RUN_SCRIPT.is_file():
+
+        print(
+            "[ERROR] run_condor_v1.sh "
+            "not found:"
+        )
+
+        print(
+            f"        {RUN_SCRIPT}"
+        )
+
+        sys.exit(1)
+
+    # --------------------------------------------------------
+    # Determine submission mode
+    # --------------------------------------------------------
+
+    is_resubmit = (
+        args.bad_jobs is not None
+    )
+
+    # --------------------------------------------------------
+    # Build list of jobs
+    # --------------------------------------------------------
+
+    if is_resubmit:
+
+        bad_jobs_file = Path(
+            args.bad_jobs
+        )
+
+        if not bad_jobs_file.is_absolute():
+
+            bad_jobs_file = (
+                Path.cwd()
+                / bad_jobs_file
+            )
+
+        jobs_by_sample = read_bad_jobs(
+            bad_jobs_file.resolve()
+        )
+
     else:
-        samples = args.samples
+
+        jobs_by_sample = prepare_normal_jobs(
+            args,
+            input_base,
+        )
+
+    if not jobs_by_sample:
+
+        print(
+            "[INFO] No jobs selected."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # Create analysis tarball once
+    # --------------------------------------------------------
+
+    create_package_tarball()
+
+    # --------------------------------------------------------
+    # Submission information
+    # --------------------------------------------------------
 
     print()
     print("=" * 70)
     print("[SUBMISSION CONFIGURATION]")
     print("=" * 70)
-    print(f"Study       : {args.study}")
-    print(f"Run period  : {args.run_period}")
-    print(f"Channel     : {args.channel}")
-    print(f"Max events  : {args.max_events}")
-    print(f"Input base  : {input_base}")
-    print(f"Samples     : {', '.join(samples)}")
+
+    print(
+        f"Mode         : "
+        f"{'BAD-JOB RESUBMIT' if is_resubmit else 'NORMAL'}"
+    )
+
+    print(
+        f"Study        : {args.study}"
+    )
+
+    print(
+        f"Run period   : {args.run_period}"
+    )
+
+    print(
+        f"Channel      : {args.channel}"
+    )
+
+    print(
+        f"Max events   : {args.max_events}"
+    )
+
+    print(
+        f"Input base   : {input_base}"
+    )
+
+    print(
+        f"Samples      : "
+        f"{len(jobs_by_sample)}"
+    )
+
     print("=" * 70)
 
     total_jobs = 0
     jdl_files = []
 
-    for sample in samples:
+    # --------------------------------------------------------
+    # Generate JDLs
+    # --------------------------------------------------------
 
-        sample_dir = input_base / sample
+    for sample in sorted(
+        jobs_by_sample.keys()
+    ):
 
-        if not sample_dir.is_dir():
-            print(
-                f"[WARNING] Sample directory does not exist: "
-                f"{sample_dir}"
-            )
-            continue
+        jobs = (
+            jobs_by_sample[
+                sample
+            ]
+        )
 
         if not is_sample_for_channel(
             sample,
             args.channel,
             args.run_period,
         ):
+
             print(
-                f"[INFO] Skip data sample not used by "
-                f"{args.channel}: {sample}"
+                f"[WARNING] Skip sample not "
+                f"valid for {args.channel}: "
+                f"{sample}"
             )
+
             continue
 
-        config_file, branch_list = get_job_config(
-            args.run_period,
-            args.channel,
-            sample,
-        )
-
-        jobs = collect_input_lists(
-            sample_dir,
-            sample,
-        )
-
-        if not jobs:
-            print(
-                f"[WARNING] No valid .list files found: {sample}"
+        config_file, branch_list = (
+            get_job_config(
+                args.run_period,
+                args.channel,
+                sample,
             )
-            continue
-
-        #
-        # Useful for initial Condor validation:
-        #
-        if args.test:
-            jobs = jobs[:1]
-
-        jdl_path = generate_sample_jdl(
-            args,
-            sample,
-            jobs,
-            config_file,
-            branch_list,
         )
 
-        total_jobs += len(jobs)
-        jdl_files.append(jdl_path)
-
-        print(
-            f"[READY] {sample:<45} "
-            f"{len(jobs):>5} jobs"
+        jdl_path, queue_file = (
+            generate_sample_jdl(
+                args,
+                sample,
+                jobs,
+                config_file,
+                branch_list,
+                is_resubmit=is_resubmit,
+            )
         )
+
+        total_jobs += len(
+            jobs
+        )
+
+        jdl_files.append(
+            jdl_path
+        )
+
+        if is_resubmit:
+
+            print(
+                f"[RESUBMIT] "
+                f"{sample:<45} "
+                f"{len(jobs):>5} jobs"
+            )
+
+            print(
+                "           Job numbers: "
+                + ", ".join(
+                    str(job_number)
+                    for job_number, _
+                    in jobs
+                )
+            )
+
+        else:
+
+            print(
+                f"[READY] "
+                f"{sample:<45} "
+                f"{len(jobs):>5} jobs"
+            )
+
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
 
     print()
     print("=" * 70)
-    print(f"[SUMMARY] Total jobs : {total_jobs}")
-    print(f"[SUMMARY] JDL files  : {len(jdl_files)}")
+
+    if is_resubmit:
+
+        print(
+            f"[SUMMARY] Jobs to resubmit : "
+            f"{total_jobs}"
+        )
+
+    else:
+
+        print(
+            f"[SUMMARY] Total jobs       : "
+            f"{total_jobs}"
+        )
+
+    print(
+        f"[SUMMARY] JDL files        : "
+        f"{len(jdl_files)}"
+    )
+
     print("=" * 70)
 
+    # --------------------------------------------------------
+    # Dry run
+    # --------------------------------------------------------
+
     if args.dry_run:
-        print("[INFO] --dry-run: no jobs submitted.")
+
+        print(
+            "[INFO] --dry-run: "
+            "no jobs submitted."
+        )
+
         return
 
+    # --------------------------------------------------------
+    # Submit
+    # --------------------------------------------------------
+
     for jdl in jdl_files:
-        submit_condor(jdl)
+
+        submit_condor(
+            jdl
+        )
 
 
 # ============================================================
@@ -488,13 +1087,19 @@ def run(args):
 def parse_args():
 
     parser = argparse.ArgumentParser(
-        description="SSBNanoAOD analysis HTCondor submitter"
+        description=(
+            "SSBNanoAOD analysis "
+            "HTCondor submitter"
+        )
     )
 
     parser.add_argument(
         "--study",
         required=True,
-        help="Study name, e.g. Testv1, AN_v7, AN_v7_JESUp",
+        help=(
+            "Study name, e.g. "
+            "NanoAODv15_Testv1"
+        ),
     )
 
     parser.add_argument(
@@ -518,37 +1123,88 @@ def parse_args():
         ],
     )
 
-    parser.add_argument(
+    # --------------------------------------------------------
+    # Selection mode
+    #
+    # Exactly one of --samples / --bad-jobs is required.
+    # --------------------------------------------------------
+
+    selection_group = (
+        parser.add_mutually_exclusive_group(
+            required=True
+        )
+    )
+
+    selection_group.add_argument(
         "--samples",
         nargs="+",
-        required=True,
         help=(
             "Samples to submit. "
-            "Use '--samples all' for all available samples."
+            "Supported shortcuts: "
+            "all, data, mc."
+        ),
+    )
+
+    selection_group.add_argument(
+        "--bad-jobs",
+        help=(
+            "Bad-job list produced by "
+            "check_jobs_v1.py --write-bad. "
+            "Only jobs listed in this file "
+            "will be resubmitted."
         ),
     )
 
     parser.add_argument(
         "--max-events",
         default="-1",
-        help="Maximum events per job. Default: -1",
+        help=(
+            "Maximum events per job. "
+            "Default: -1"
+        ),
     )
 
     parser.add_argument(
         "--test",
         action="store_true",
-        help="Submit only the first list file of each selected sample.",
+        help=(
+            "Normal submission mode only: "
+            "use the first list file of "
+            "each selected sample."
+        ),
     )
 
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Generate tarball/JDLs but do not run condor_submit.",
+        help=(
+            "Generate tarball/JDL/queue files "
+            "but do not run condor_submit."
+        ),
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
+    # --test does not make sense in bad-job mode.
+    if (
+        args.bad_jobs
+        and args.test
+    ):
+
+        parser.error(
+            "--test cannot be used together "
+            "with --bad-jobs"
+        )
+
+    return args
+
+
+# ============================================================
+# Entry point
+# ============================================================
 
 if __name__ == "__main__":
+
     args = parse_args()
+
     run(args)
