@@ -1153,10 +1153,18 @@ TString Analysis::SetInputFileName(std::string inname)
 
 bool Analysis::ChannelIndex() const {
     if (isData) return true;
-    // Only TTbar_Signal is gen-channel-matched right now; every other sample
-    // (backgrounds, and eventually an inclusive "others" split) passes
-    // through untouched until that's wired in separately.
-    if (!TString(FileName_).Contains("TTbar_Signal")) return true;
+
+    // TTbar_Signal and TTbar_DiLepBKG point at the SAME physical dilepton
+    // ttbar files (TTbar_DiLepBKG's input list is just a copy of
+    // TTbar_Signal's) - the file name alone decides which half of the split
+    // this job keeps. TTbar_DiLepBKG is deliberately not named "TTbar_Others":
+    // that name is reserved for the merged background group (TTbar_DiLepBKG +
+    // TTbar_AllHadronic + TTbar_SemiLeptonic) built at the hadd/plotting
+    // stage, so a per-sample name and the group label it eventually feeds
+    // into don't collide. Everything else passes through untouched.
+    bool isSignalSample = TString(FileName_).Contains("TTbar_Signal");
+    bool isDiLepBkgSample = TString(FileName_).Contains("TTbar_DiLepBKG");
+    if (!isSignalSample && !isDiLepBkgSample) return true;
     if (!branchReader_.BranchIsAvailable("TopCPVCat_Channel_Idx")) return true;
 
     int decay_idx = 0;
@@ -1165,7 +1173,9 @@ bool Analysis::ChannelIndex() const {
     else if (TString(Decaymode).Contains("dimuon")) decay_idx = 26;
 
     int channel_idx = static_cast<int>(branchReader_.RequiredIntValue("TopCPVCat_Channel_Idx"));
-    return channel_idx == decay_idx;
+
+    if (isSignalSample) return channel_idx == decay_idx;   // keep only the matching channel
+    return channel_idx != decay_idx;                        // DiLepBKG: keep everything but the matching channel
 }
 
 void Analysis::MCSF()

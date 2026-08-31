@@ -160,11 +160,10 @@ private:
     TString SetInputFileName( std::string inname );
     void SetObjectVariable();
 
-    // Gen-level dilepton-channel filter, TTbar_Signal only for now: keeps an
-    // event iff its true (ee/emu/mumu) decay via TopCPVCat_Channel_Idx
-    // matches the analysis's configured channel. Everything else (other
-    // backgrounds, and eventually an inclusive "others" split) passes
-    // through untouched - a no-op (returns true) for data or non-signal files.
+    // Gen-level dilepton-channel split for TTbar_Signal/TTbar_DiLepBKG, both
+    // pointed at the same physical files via TopCPVCat_Channel_Idx: the
+    // Signal job keeps only the matching channel, the DiLepBKG job keeps
+    // everything else. No-op (returns true) for data or unrelated samples.
     bool ChannelIndex() const;
 
     void MCSF();
