@@ -1,5 +1,8 @@
 run, run, UInt_t, single
 Generator_weight, Generator, Float_t, single
+
+# Gen-level dilepton channel (ee/emu/mumu) for TTbar_Signal/TTbar_DiLepBKG split - see Analysis::ChannelIndex(). Optional, absent on non-ttbar/older samples.
+TopCPVCat_Channel_Idx, Event, Int_t, single
 HLT_IsoMu27, trigger, Bool_t, single
 HLT_IsoMu24_eta2p1, trigger, Bool_t, single
 HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL, trigger, Bool_t, single

@@ -6,7 +6,7 @@
 import os
 import glob
 
-BLIND_SECTION = "\n####### Blinding #######\nisBlind True ### after unblinding False\n"
+BLIND_SECTION = "\n####### Blinding #######\nisBlind : \"True\" ### after unblinding False\n"
 KEY = "isBlind"
 
 BASE_DIRS = [

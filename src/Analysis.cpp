@@ -9,10 +9,20 @@ namespace {
 // "Ture") throws instead of silently being treated as "off" by a later
 // `== "True"` check - unlike the old "== \"DUMMY\"" sentinel pattern, which
 // only caught a fully-missing key, not a misspelled value.
+// `required=true` throws instead of warn-and-defaulting when the key is
+// absent - use this for flags where a silent default is unsafe (e.g.
+// isBlind: defaulting a missing key to "unblinded" on real Data would be
+// exactly the kind of silent failure this whole helper exists to prevent).
 TString ReadValidatedBoolConfig(TextReader* reader, const std::string& key,
-                                 const char* defaultText, Logger& logger) {
+                                 const char* defaultText, Logger& logger,
+                                 bool required = false) {
     std::string raw = reader->Check(key) ? reader->GetText(key) : "DUMMY";
     if (raw == "DUMMY") {
+        if (required) {
+            throw std::runtime_error("Required config key '" + key + "' is missing or malformed "
+                                      "(expected 'Key : \"True\"' or 'Key : \"False\"' - check for a "
+                                      "missing ':' or quotes).");
+        }
         logger.Warning() << key << " not set in config - defaulting to " << defaultText << "." << std::endl;
         return TString(defaultText);
     }
@@ -157,8 +167,11 @@ void Analysis::SetVariables() {
     Decaymode = SSBConfReader->GetText( "Channel" ); // Channel
     XsecTable_ = SSBConfReader->GetText( "XSecTablesName" );
 
-    std::string blindStr = SSBConfReader->GetText( "isBlind" );
-    isBlind = (blindStr == "True" || blindStr == "true");
+    // required=true: on real Data, a missing/malformed isBlind must fail the
+    // job loudly rather than silently running unblinded (see the
+    // ReadValidatedBoolConfig comment above).
+    TString blindStr = ReadValidatedBoolConfig(SSBConfReader.get(), "isBlind", "False", logger_, /*required=*/true);
+    isBlind = (blindStr == "True");
     logger_.Info() << "[Blind] isData=" << isData << " isBlind=" << isBlind << std::endl;
 
     // Debug event tracer - optional, off by default; Check()-guarded since
@@ -1165,7 +1178,22 @@ bool Analysis::ChannelIndex() const {
     bool isSignalSample = TString(FileName_).Contains("TTbar_Signal");
     bool isDiLepBkgSample = TString(FileName_).Contains("TTbar_DiLepBKG");
     if (!isSignalSample && !isDiLepBkgSample) return true;
-    if (!branchReader_.BranchIsAvailable("TopCPVCat_Channel_Idx")) return true;
+    if (!branchReader_.BranchIsAvailable("TopCPVCat_Channel_Idx")) {
+        // Missing on a non-Signal/DiLepBKG sample is expected and fine (see
+        // above) - but on THESE samples it silently disables the entire
+        // point of running them as a pair, so this warrants a loud warning
+        // rather than the same quiet fallback. Print once, not per-event.
+        static bool warned = false;
+        if (!warned) {
+            logger_.Warning() << "ChannelIndex: TopCPVCat_Channel_Idx not available for "
+                      << FileName_ << " - gen-channel split is NOT being applied; "
+                      << "this sample will pass through unfiltered. Add "
+                      << "TopCPVCat_Channel_Idx to the branch list if that's not intended."
+                      << std::endl;
+            warned = true;
+        }
+        return true;
+    }
 
     int decay_idx = 0;
     if      (TString(Decaymode).Contains("dielec")) decay_idx = 22;
