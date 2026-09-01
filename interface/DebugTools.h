@@ -45,7 +45,10 @@ public:
     // Returns std::cerr/std::cout prefixed with the level tag if the level
     // passes the threshold, otherwise a null stream that discards everything
     // written to it - callers don't need their own `if (level_ >= X)` guard.
-    std::ostream& Stream(LogLevel lvl) {
+    // const: logging doesn't mutate the Logger's logical state (level_ is
+    // only read here), so this can be called from const member functions
+    // like Analysis::ChannelIndex() without needing a mutable logger_.
+    std::ostream& Stream(LogLevel lvl) const {
         if (static_cast<int>(lvl) > static_cast<int>(level_)) {
             return NullStream();
         }
@@ -54,11 +57,11 @@ public:
         return out;
     }
 
-    std::ostream& Error()   { return Stream(LogLevel::Error); }
-    std::ostream& Warning() { return Stream(LogLevel::Warning); }
-    std::ostream& Info()    { return Stream(LogLevel::Info); }
-    std::ostream& Debug()   { return Stream(LogLevel::Debug); }
-    std::ostream& Trace()   { return Stream(LogLevel::Trace); }
+    std::ostream& Error()   const { return Stream(LogLevel::Error); }
+    std::ostream& Warning() const { return Stream(LogLevel::Warning); }
+    std::ostream& Info()    const { return Stream(LogLevel::Info); }
+    std::ostream& Debug()   const { return Stream(LogLevel::Debug); }
+    std::ostream& Trace()   const { return Stream(LogLevel::Trace); }
 
 private:
     LogLevel level_;
