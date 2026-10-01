@@ -26,33 +26,6 @@ SUBMIT_BASE = CONDOR_DIR / "condorSubmit"
 
 
 # ============================================================
-# User
-# ============================================================
-
-USER_ID = os.environ.get("USER") or os.getlogin()
-
-
-# ============================================================
-# External InputList locations
-# ============================================================
-
-INPUT_LIST_BASE = {
-
-    "UL2018": Path(
-        f"/u/user/{USER_ID}/Develop/CPviolation/SSB/AnalysisCode/"
-        "NanoAODNtuple_v1/NtupleList_v1/"
-        "2018_v6-FromGuks/FileList/InputList"
-    ),
-
-    # Add later:
-    #
-    # "UL2017": Path("..."),
-    # "UL2016PreVFP": Path("..."),
-    # "UL2016PostVFP": Path("..."),
-}
-
-
-# ============================================================
 # Data utilities
 # ============================================================
 
@@ -135,10 +108,48 @@ def get_job_config(
     }
 
     config_file = config_map[channel]
+    branch_list = f"{run_period}/branch_list_v15.txt"
 
-    branch_list = (
-        f"{run_period}/branch_list_v15.txt"
-    )
+    # UL2017's HLT menu changed after Run2017B (e.g.
+    # HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8 only exists from RunC
+    # onward, and RunB's config also requires HLT_IsoMu24_eta2p1 in
+    # addition to HLT_IsoMu27) - unlike UL2018, a single flat
+    # config/branch-list pair is NOT correct here. Mirrors the era split
+    # submit_jobs_v23p1_2017.py already used for the v9 branch lists
+    # (branch_list_Run2017B.txt / branch_list_Run2017CtoF.txt), just
+    # pointed at the new v15 configs/branch lists.
+    if run_period == "UL2017" and is_data_sample(sample):
+        run_era_map = {
+            "MuMu": {"RunB": "dimuon_Data_RunB.config", "RunCtoF": "dimuon_Data_RunCtoF.config"},
+            "ElEl": {"RunB": "dielec_Data_RunB.config", "RunCtoF": "dielec_Data_RunCtoF.config"},
+            "MuEl": {"RunB": "muelec_Data_RunB.config", "RunCtoF": "muelec_Data_RunCtoF.config"},
+        }
+        run_info = sample.split("_")[-1]  # e.g. "Run2017B", "Run2017C", ...
+        if "Run2017B" in run_info:
+            config_file = run_era_map[channel]["RunB"]
+            branch_list = f"{run_period}/branch_list_Run2017B_v15.txt"
+        else:
+            config_file = run_era_map[channel]["RunCtoF"]
+            branch_list = f"{run_period}/branch_list_Run2017CtoF_v15.txt"
+
+    # UL2016PostVFP: RunH required DZ-variant trigger paths (L1 rate
+    # mitigation) and dropped HLT_DoubleEle33_CaloIdL_GsfTrkIdVL entirely -
+    # same kind of era split as UL2017's RunB, just a single RunH vs.
+    # "everything else" split instead of RunB vs RunC-F. UL2016PreVFP does
+    # NOT need this (no RunX-specific trigger menu change within PreVFP).
+    elif run_period == "UL2016PostVFP" and is_data_sample(sample):
+        run_era_map = {
+            "MuMu": {"RunH": "dimuon_Data_RunH.config", "base": "dimuon.config"},
+            "ElEl": {"RunH": "dielec_Data_RunH.config", "base": "dielec.config"},
+            "MuEl": {"RunH": "muelec_Data_RunH.config", "base": "muelec.config"},
+        }
+        run_info = sample.split("_")[-1]  # e.g. "Run2016H", "Run2016G", ...
+        if "Run2016H" in run_info:
+            config_file = run_era_map[channel]["RunH"]
+            branch_list = f"{run_period}/branch_list_RunH_v15.txt"
+        else:
+            config_file = run_era_map[channel]["base"]
+            branch_list = f"{run_period}/branch_list_v15.txt"
 
     return config_file, branch_list
 
@@ -802,40 +813,62 @@ def prepare_normal_jobs(
 def run(args):
 
     # --------------------------------------------------------
-    # Validate run period
+    # Determine submission mode
     # --------------------------------------------------------
 
-    if (
-        args.run_period
-        not in INPUT_LIST_BASE
-    ):
-
-        print(
-            "[ERROR] InputList base path "
-            f"is not configured for "
-            f"{args.run_period}"
-        )
-
-        sys.exit(1)
-
-    input_base = (
-        INPUT_LIST_BASE[
-            args.run_period
-        ]
+    is_resubmit = (
+        args.bad_jobs is not None
     )
 
-    if not input_base.is_dir():
+    # --------------------------------------------------------
+    # InputList base directory
+    #
+    # Normal mode:
+    #   --input-base is required.
+    #
+    # Bad-job mode:
+    #   InputList paths are read directly from the bad-job
+    #   file, so --input-base is not needed.
+    # --------------------------------------------------------
 
-        print(
-            "[ERROR] InputList directory "
-            "not found:"
-        )
+    input_base = None
 
-        print(
-            f"        {input_base}"
-        )
+    if not is_resubmit:
 
-        sys.exit(1)
+        if args.input_base is None:
+
+            print(
+                "[ERROR] --input-base is required "
+                "for normal submission mode."
+            )
+
+            sys.exit(1)
+
+        input_base = Path(
+            args.input_base
+        ).expanduser()
+
+        if not input_base.is_absolute():
+
+            input_base = (
+                Path.cwd()
+                / input_base
+            )
+
+        input_base = input_base.resolve()
+
+        if not input_base.is_dir():
+
+            print(
+                "[ERROR] InputList directory "
+                "not found:"
+            )
+
+            print(
+                f"        {input_base}"
+            )
+
+            sys.exit(1)
 
     # --------------------------------------------------------
     # Worker script
@@ -853,14 +886,6 @@ def run(args):
         )
 
         sys.exit(1)
-
-    # --------------------------------------------------------
-    # Determine submission mode
-    # --------------------------------------------------------
-
-    is_resubmit = (
-        args.bad_jobs is not None
-    )
 
     # --------------------------------------------------------
     # Build list of jobs
@@ -934,9 +959,18 @@ def run(args):
         f"Max events   : {args.max_events}"
     )
 
-    print(
-        f"Input base   : {input_base}"
-    )
+    if is_resubmit:
+
+        print(
+            "Input base   : "
+            "from bad-job file"
+        )
+
+    else:
+
+        print(
+            f"Input base   : {input_base}"
+        )
 
     print(
         f"Samples      : "
@@ -1124,6 +1158,25 @@ def parse_args():
     )
 
     # --------------------------------------------------------
+    # InputList location
+    #
+    # Required for normal submission mode.
+    # Not needed for --bad-jobs because the bad-job file
+    # already contains the absolute InputList paths.
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--input-base",
+        default=None,
+        help=(
+            "Base directory containing sample "
+            "directories with input .list files. "
+            "Required for normal submission mode. "
+            "Example: /path/to/InputList/2017"
+        ),
+    )
+
+    # --------------------------------------------------------
     # Selection mode
     #
     # Exactly one of --samples / --bad-jobs is required.
@@ -1194,6 +1247,16 @@ def parse_args():
         parser.error(
             "--test cannot be used together "
             "with --bad-jobs"
+        )
+
+    if (
+        args.samples is not None
+        and args.input_base is None
+    ):
+
+        parser.error(
+            "--input-base is required when "
+            "using --samples"
         )
 
     return args

@@ -1156,10 +1156,14 @@ TLorentzVector SSBCorrections::ApplyType1METWithCorrT1(
 
 
 bool SSBCorrections::ShouldVetoJet(const TLorentzVector& jet, double chEmEF, double neEmEF) const {
-    // Only apply for 2018 data/MC
-    if (year_ != "2018") {
-        return false;
-    }
+    // Previously hardcoded "if (year_ != "2018") return false;" here - that
+    // was scoped to this function's original purpose (the 2018 HEM15/16
+    // issue only). Generalized so ANY year can evaluate a jet veto map, as
+    // long as one is actually configured/loaded (jetvetomap_ check right
+    // below) - needed for Run3, where jet veto maps are mandatory (JME twiki
+    // JECDataMC#Jet_veto_maps, "Run 3" section), not conditional on year.
+    // 2016/2017 aren't wired up to call this yet from Analysis::JetSelector's
+    // checkHemVeto - only 2018 (HEM) and Run3 (mandatory) are, for now.
 
     // Check if jetvetomap is loaded
     if (!jetvetomap_) {

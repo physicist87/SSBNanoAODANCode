@@ -1890,13 +1890,103 @@ void Analysis::JetSelector() {
         return pt > jet_pt && fabs(eta) < jet_eta;
     };
 
+    // RunPeriod naming for Run3 hasn't been settled in this codebase yet (no
+    // Run3 configs/branch lists exist) - this is a best-guess placeholder
+    // covering "2022"/"2023"/"2024"; update once real Run3 config RunRange
+    // values are defined.
+    bool isRun3Period = RunPeriod.Contains("2022") || RunPeriod.Contains("2023") || RunPeriod.Contains("2024");
+
+    // JME POG's "loose"/"minimal" jet-veto-map eligibility selection.
+    // pT>15, |eta|<5.2 is shared by both the Run2 HEM15/16 selection (cms-talk
+    // "Question about HEM15/16 issue in 2018 Ultra Legacy") and the Run3
+    // minimal selection (JME twiki JECDataMC#Jet_veto_maps, "Run 3" section) -
+    // both list "jet pT > 15 GeV" and neither restricts eta beyond the
+    // detector's own jet acceptance. Deliberately WIDER than and independent
+    // of the analysis's own baseline Jet_pt/Jet_eta (30 GeV/2.4) - a jet too
+    // soft or too forward to ever enter the analysis's own jet collection can
+    // still sit in a vetoed region and (per JME's recommendation) should veto
+    // the whole event, which only makes sense checked upstream of the
+    // baseline-cut loop below, not nested inside it.
+    auto passLooseVetoCuts = [](float pt, float eta) -> bool {
+        return pt > 15.0f && fabs(eta) < 5.2f;
+    };
+
+    // Shared HEM15/16 (2018) / mandatory (Run3) gate + veto-map lookup, used
+    // by both the upstream loose-selection event check and the
+    // baseline-selection jet check below so the two can't silently drift out
+    // of sync.
+    auto checkHemVeto = [this, isRun3Period](int i, const TLorentzVector& jetVec) -> bool {
+        bool should_apply_veto = false;
+        if (RunPeriod.Contains("2018")) {
+            // HEM15/16: only a fraction of runs/events are actually affected
+            // (see cms-talk thread) - not a permanent detector condition.
+            if (isData) {
+                if (branchReader_.BranchIsAvailable("run")) {
+                    unsigned int run_num = branchReader_.RequiredUIntValue("run");
+                    should_apply_veto = (run_num >= 319077);
+                }
+            } else {
+                should_apply_veto = ((current_entry_ % 10000) < 6478);  // 64.78%
+            }
+        } else if (isRun3Period) {
+            // Run3: jet veto maps are mandatory and apply to every event, no
+            // run-range/MC-fraction gating - the vetoed regions are fixed-bad
+            // detector zones for the whole data-taking period (JME twiki:
+            // "In 2022, separate veto maps are provided for RunCD and
+            // RunEFG. Apply the map derived for the corresponding data
+            // period to each MC sample." - i.e. which JSON/key to use is a
+            // config choice, not an in-code gate like the HEM run-number one).
+            should_apply_veto = true;
+        }
+        if (!should_apply_veto) return false;
+
+        // VetoChecker pre-selection requires (chEmEF+neEmEF)<0.90 before the veto map.
+        double jetChEmEFForVeto = (branchReader_.OptionalFloatArray("Jet_chEmEF") && branchReader_.OptionalFloatArray("Jet_chEmEF")->GetSize() > i)
+                                     ? branchReader_.RequiredFloatArray("Jet_chEmEF")->At(i) : 0.0;
+        double jetNeEmEFForVeto = (branchReader_.OptionalFloatArray("Jet_neEmEF") && branchReader_.OptionalFloatArray("Jet_neEmEF")->GetSize() > i)
+                                     ? branchReader_.RequiredFloatArray("Jet_neEmEF")->At(i) : 0.0;
+        return SSBCorr->ShouldVetoJet(jetVec, jetChEmEFForVeto, jetNeEmEFForVeto);
+    };
+
+    isjetveto_event_ = false;  // set once per event, not per jet
+
     Int_t nJets = jets_pt->GetSize();
 
+    // --- Pass 1: event-level veto on the wider loose selection ---
+    // Runs for JetVetoType="event" (2018 HEM, analysis's choice) OR
+    // unconditionally for Run3 (mandatory - JME twiki: "Jet veto maps are
+    // mandatory for Run 3 analyses", event-level required, not a config
+    // option). For plain Run2 "jet" mode this pass is a guaranteed no-op
+    // (see the cms-talk discussion this was built from) so it's skipped
+    // entirely to avoid extra RequiredUIntValue("run") lookups.
+    if (SSBCorr->GetJetVetoType() == "event" || isRun3Period) {
+        for (int i = 0; i < nJets; i++) {
+            TLorentzVector jetVec = pre_jets[i];
+            if (!passLooseVetoCuts(jetVec.Pt(), jetVec.Eta())) continue;
+            // Run3's minimal selection specifically requires tightLepVeto ID
+            // (JME twiki), independent of whatever Jet_ID the analysis itself
+            // is configured with - not PassConfiguredJetId(), which follows
+            // the config. 2018 HEM keeps using the analysis's configured ID
+            // (unchanged from before - the cms-talk "tight ID with lep veto
+            // OR [tight ID & EM-frac<0.9 & no muon overlap]" OR-branch isn't
+            // separately implemented here, this is still a simplification).
+            bool passesLooseId = isRun3Period
+                ? JetID(branchReader_, RunPeriod).PassTightLepVeto(i)
+                : PassConfiguredJetId(i);
+            if (!passesLooseId) continue;
+            if (checkHemVeto(i, jetVec)) {
+                isjetveto_event_ = true;
+                return;  // whole event vetoed - don't bother building the jet collection
+            }
+        }
+    }
+
+    // --- Pass 2: normal baseline jet selection (unchanged pt>30/eta<2.4) ---
     for (int i = 0; i < nJets; i++) {
         TLorentzVector jetVec = pre_jets[i];
         float jetPt = jetVec.Pt();
         float jetEta = jetVec.Eta();
-        
+
         // Apply kinematic cuts first
         if (!passKinematicCuts(jetPt, jetEta)) {
             continue;
@@ -1917,40 +2007,18 @@ void Analysis::JetSelector() {
         if (apply_puid_ && jetPt <= puid_pt_threshold_) {
             int puId = (jets_puId != nullptr) ? jets_puId->At(i) : 0;
             bool passPUID = PassPileupID(jetPt, puId, puid_wp_);
-            
+
             if (!passPUID) {
                 continue;  // Skip this jet if PUID fails
             }
         }
 
-	// Initialize jet veto event flag
-        isjetveto_event_ = false;
-
-        // Apply HEM15/16 veto based on configuration type
-        bool should_apply_hem = false;
-        if (RunPeriod.Contains("2018")) {
-            if (isData) {
-                if (branchReader_.BranchIsAvailable("run")) {
-                    unsigned int run_num = branchReader_.RequiredUIntValue("run");
-                    should_apply_hem = (run_num >= 319077);
-                }
-            } else {
-                should_apply_hem = ((current_entry_ % 10000) < 6478);  // 64.78%
-            }
-        }
-
-        // VetoChecker pre-selection requires (chEmEF+neEmEF)<0.90 before the veto map.
-        double jetChEmEFForVeto = (branchReader_.OptionalFloatArray("Jet_chEmEF") && branchReader_.OptionalFloatArray("Jet_chEmEF")->GetSize() > i)
-                                     ? branchReader_.RequiredFloatArray("Jet_chEmEF")->At(i) : 0.0;
-        double jetNeEmEFForVeto = (branchReader_.OptionalFloatArray("Jet_neEmEF") && branchReader_.OptionalFloatArray("Jet_neEmEF")->GetSize() > i)
-                                     ? branchReader_.RequiredFloatArray("Jet_neEmEF")->At(i) : 0.0;
-        if (should_apply_hem && SSBCorr->ShouldVetoJet(jetVec, jetChEmEFForVeto, jetNeEmEFForVeto)) {
-            if (SSBCorr->GetJetVetoType() == "jet") {
-                continue; // Skip this jet
-            } else { // "event" type
-                isjetveto_event_ = true;
-                return; // Exit JetSelector early
-            }
+        // Jet-level HEM15/16 veto (JetVetoType="jet"): drop just this jet.
+        // Event-level ("event") was already fully handled in Pass 1 above -
+        // GetJetVetoType() can't have changed mid-event, so no need to
+        // re-check the "event" branch here.
+        if (SSBCorr->GetJetVetoType() == "jet" && checkHemVeto(i, jetVec)) {
+            continue; // Skip this jet
         }
         // Add to selected jets
         v_jet_idx.push_back(i);
@@ -2484,6 +2552,7 @@ bool Analysis::NumbJetCut(std::vector<int> v_jets)
    if ( v_jets.size() >= 1 ){ numbjetcut = true; }
    return numbjetcut;
 }
+
 void Analysis::SetUpKINObs()
 {
    isKinSol=false;
@@ -2503,10 +2572,10 @@ void Analysis::SetUpKINObs()
    auto kinematicReconstruction = std::make_unique<KinematicReconstruction>(1, true);
 
    const LV met_LV = common::TLVtoLV(Met);
-   
+
    // Create a map to translate from original jet indices to new indices in v_jets_VLV
    std::map<int, int> jet_idx_map;
-   
+
    for (int i = 0; i < v_jet_idx.size(); ++i)
    {
       int idx_jet = v_jet_idx[i];
@@ -2523,15 +2592,15 @@ void Analysis::SetUpKINObs()
          v_bjetidx_KIN.push_back(jet_idx_map[orig_idx]);
       }
    }
-   
+
 
    // Only proceed if we have valid b-jet indices
    if (!v_bjetidx_KIN.empty() && v_jets_VLV.size() > 0) {
-      KinematicReconstructionSolutions kinematicReconstructionSolutions = 
-         kinematicReconstruction->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN, 
-                                         v_bjetidx_KIN, v_leptons_VLV, v_jets_VLV, 
+      KinematicReconstructionSolutions kinematicReconstructionSolutions =
+         kinematicReconstruction->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN,
+                                         v_bjetidx_KIN, v_leptons_VLV, v_jets_VLV,
                                          jets_btag_vec, met_LV);
-                                         
+
       if (kinematicReconstructionSolutions.numberOfSolutions()) {
          isKinSol= true;
          LV top1 = kinematicReconstructionSolutions.solution().top();
@@ -2540,7 +2609,7 @@ void Analysis::SetUpKINObs()
          LV bjet2 = kinematicReconstructionSolutions.solution().antiBjet();
          LV neutrino1 = kinematicReconstructionSolutions.solution().neutrino();
          LV neutrino2 = kinematicReconstructionSolutions.solution().antiNeutrino();
-         
+
          Top       = common::LVtoTLV(top1);
          AnTop     = common::LVtoTLV(top2);
          bJet      = common::LVtoTLV(bjet1);
@@ -2554,6 +2623,27 @@ void Analysis::SetUpKINObs()
    } else {
       logger_.Warning() << "Not enough b-jets or jets for kinematic reconstruction" << std::endl;
    }
+
+   // TEMPORARY WORKAROUND: KinematicReconstruction occasionally reports
+   // numberOfSolutions()>0 but hands back a degenerate (near-zero energy)
+   // top/antitop - i.e. it didn't really find a solution. Catch that here
+   // and force isKinSol back to false so downstream code doesn't treat a
+   // degenerate solution as valid.
+   // NOTE: fixed a bug here where "isKinSol = false;" sat OUTSIDE the
+   // "if (Top.Energy() < 0.01)" braces, so it ran unconditionally whenever
+   // isKinSol was true - killing every good solution, not just degenerate
+   // ones. That's why h_Lep1pt_8 / h_Reco_CPO1_ReRange were always empty.
+   if (isKinSol && Top.Energy() < 0.01) {
+      logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
+                         << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
+      isKinSol = false;
+   } else if (isKinSol && AnTop.Energy() < 0.01) {
+      logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
+                         << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
+      isKinSol = false;
+   }
+   // Clean up
+
 }
 
 void Analysis::LeptonSFApply()

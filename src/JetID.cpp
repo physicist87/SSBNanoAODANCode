@@ -44,6 +44,28 @@ bool JetID::PassTight(int idx) const {
         } else {
             passTight = (neMult > 2) && (neEmEF < 0.9);
         }
+    } else if (runPeriod_.Contains("2022") || runPeriod_.Contains("2023") || runPeriod_.Contains("2024")) {
+        // Run3 PLACEHOLDER - not a confirmed JME recommendation. Reuses the
+        // 2017/2018 UL formula as a stand-in since no Run3-specific working
+        // point has been verified against the actual JME Run3 Jet ID TWiki
+        // (see "legacy Run 3 Jet ID TWiki" linked from JECDataMC#Jet_veto_maps)
+        // yet. This exists so Run3 jets don't unconditionally fail tight ID
+        // (which would make the Run3 mandatory event veto below always trip
+        // via the "no ID → treat as failing" path, or always skip via "ID
+        // never passes") - confirm the actual Run3 cut values before trusting
+        // any Run3 result that depends on jet ID.
+        std::cerr << "[WARNING] JetID::PassTight: using UNVERIFIED Run2 (2017/2018) formula as a "
+                  << "Run3 placeholder for RunPeriod " << runPeriod_
+                  << " - confirm against the real Run3 Jet ID TWiki before trusting results." << std::endl;
+        if (absEta <= 2.6) {
+            passTight = (neHEF < 0.9) && (neEmEF < 0.9) && ((chMult + neMult) > 1) && (chHEF > 0.0) && (chMult > 0);
+        } else if (absEta <= 2.7) {
+            passTight = (neHEF < 0.90) && (neEmEF < 0.99);
+        } else if (absEta <= 3.0) {
+            passTight = (neHEF < 0.9999);
+        } else {
+            passTight = (neMult > 2) && (neEmEF < 0.9);
+        }
     } else {
         std::cerr << "[WARNING] JetID::PassTight: no PUPPI jet ID formula defined for RunPeriod "
                   << runPeriod_ << " - treating jet as failing tight ID." << std::endl;

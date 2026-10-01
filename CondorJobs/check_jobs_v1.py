@@ -29,18 +29,17 @@ SE_BASE = f"/store/user/{USER_ID}/CPV_Run2/ULSummer20"
 # Keep this consistent with submit_jobs_v1.py
 # ============================================================
 
-INPUT_LIST_BASE = {
-    "UL2018": Path(
-        "/u/user/sha/Develop/CPviolation/SSB/AnalysisCode/"
-        "NanoAODNtuple_v1/NtupleList_v1/"
-        "2018_v6-FromGuks/FileList/InputList"
-    ),
+INPUT_LIST_ROOT = Path(
+    "/u/user/sha/Develop/CPviolation/SSB/AnalysisCode/"
+    "NanoAODNtuple_v1/NtupleList_v1/"
+    "NanoAODv15_v2/InputList"
+)
 
-    # Add later:
-    #
-    # "UL2017": Path("..."),
-    # "UL2016PreVFP": Path("..."),
-    # "UL2016PostVFP": Path("..."),
+INPUT_LIST_BASE = {
+    "UL2016PreVFP":  INPUT_LIST_ROOT / "2016PreVFP",
+    "UL2016PostVFP": INPUT_LIST_ROOT / "2016PostVFP",
+    "UL2017":        INPUT_LIST_ROOT / "2017",
+    "UL2018":        INPUT_LIST_ROOT / "2018",
 }
 
 
@@ -380,6 +379,91 @@ def get_se_root_files(
 
 
 # ============================================================
+# Check whether all ROOT files in an InputList contain 0 events
+#
+# This is used only for jobs that are otherwise classified as
+# FAILED / INCOMPLETE / MISSING / etc.
+#
+# NtupleForge can legitimately produce a zero-event ROOT file
+# when all events in the original data file are rejected by
+# Golden JSON filtering.
+#
+# edmFileUtil output example:
+#
+#   (... 0 runs, 0 lumis, 0 events, ... bytes)
+#
+# IMPORTANT:
+#   - True  : every ROOT file in the .list was checked
+#             successfully and the TOTAL number of events is 0
+#   - False : at least one event exists, the file cannot be
+#             checked, or the list is empty
+#
+# Therefore a check failure never hides a genuine failed job.
+# ============================================================
+
+def input_list_has_zero_events(list_path: Path):
+
+    content = read_text(list_path)
+
+    root_files = [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip()
+        and not line.strip().startswith("#")
+    ]
+
+    if not root_files:
+        return False
+
+    total_events = 0
+
+    for root_file in root_files:
+
+        try:
+            result = subprocess.run(
+                [
+                    "edmFileUtil",
+                    root_file,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=120,
+            )
+
+        except (
+            subprocess.TimeoutExpired,
+            OSError,
+        ):
+            return False
+
+        if result.returncode != 0:
+            return False
+
+        text = (
+            result.stdout
+            + "\n"
+            + result.stderr
+        )
+
+        matches = re.findall(
+            r"(\d+)\s+events\b",
+            text,
+        )
+
+        if not matches:
+            return False
+
+        # edmFileUtil can print the filename first and then the
+        # summary line.  Use the last event-count occurrence.
+        events = int(matches[-1])
+
+        total_events += events
+
+    return total_events == 0
+
+
+# ============================================================
 # Determine job status
 # ============================================================
 
@@ -565,6 +649,25 @@ def check_sample(
             output_exists,
         )
 
+        # ----------------------------------------------------
+        # Legitimate zero-event NtupleForge input
+        #
+        # Do NOT inspect already-successful jobs.
+        #
+        # If a job is otherwise bad/unfinished, inspect the
+        # ROOT file(s) listed in its InputList.  When every
+        # input ROOT file is readable and the total number of
+        # events is exactly zero, classify it as EMPTY_INPUT
+        # instead of a genuine failure.
+        # ----------------------------------------------------
+
+        if status != "OK":
+
+            if input_list_has_zero_events(
+                job["list_path"]
+            ):
+                status = "EMPTY_INPUT"
+
         results.append(
             {
                 **job,
@@ -602,10 +705,15 @@ def check_sample(
         0,
     )
 
+    empty_input = counts.get(
+        "EMPTY_INPUT",
+        0,
+    )
+
     total = len(results)
 
     bad = (
-        total - ok
+        total - ok - empty_input
     )
 
     print(
@@ -631,7 +739,10 @@ def check_sample(
 
             if (
                 not args.details
-                and item["status"] == "OK"
+                and item["status"] in (
+                    "OK",
+                    "EMPTY_INPUT",
+                )
             ):
                 continue
 
@@ -867,7 +978,10 @@ def run(args):
 
             total_jobs += 1
 
-            if item["status"] != "OK":
+            if item["status"] not in (
+                "OK",
+                "EMPTY_INPUT",
+            ):
 
                 bad_jobs.append(
                     (
@@ -890,6 +1004,7 @@ def run(args):
     )
 
     for status in [
+        "EMPTY_INPUT",
         "RUNNING",
         "FAILED",
         "STAGEOUT_FAIL",
