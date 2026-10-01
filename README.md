@@ -158,7 +158,32 @@ The single biggest driver of change is that NanoAODv15's default AK4 jet collect
 - **JEC/JER/Type-1 MET**: rebuilt to match the CMS JERC ApplicationTutorial term-for-term, including starting Type-1 MET from the genuinely uncorrected `RawMET_pt`/`RawPuppiMET_pt` (not the already-Type1-corrected `MET_pt`/`PuppiMET_pt`), muon-subtracting jets before Type-1 propagation, and including the low-pT `CorrT1METJet_` collection.
 - **cvmfs paths**: default correction-file distribution switched to CMS's new "CAT" layout (`/cvmfs/cms-griddata.cern.ch/cat/metadata/...`), with per-POG campaign-folder differences documented (not every POG needed a new v15-era folder).
 
-Only UL2018 configs/branch lists exist so far; UL2016PreVFP/UL2016PostVFP/UL2017 are not yet migrated. See `v15_migration/README.md` for the full "what changed, by area" writeup and `v15_migration/NOTES.md` for the complete, dated account of every bug found and fixed along the way (including two real physics bugs: a JEC scale factor being squared into jet mass, and Type-1 MET being built from an already-corrected MET branch instead of the genuinely raw one).
+All four Run-2 UL run periods now have v15 configs/branch lists: `UL2018`, `UL2017`, `UL2016PreVFP`, `UL2016PostVFP`. See `v15_migration/README.md` for the full "what changed, by area" writeup and `v15_migration/NOTES.md` for the complete, dated account of every bug found and fixed along the way (including two real physics bugs: a JEC scale factor being squared into jet mass, and Type-1 MET being built from an already-corrected MET branch instead of the genuinely raw one).
+
+### Per-era JEC/JER/JetVeto tags (confirmed against actual `jet_jerc.json.gz` / `jetvetomaps.json.gz`)
+
+| Era | JECName | JERName | JetVetoName |
+|---|---|---|---|
+| UL2018 | `Summer20UL18NanoV15_V1` | `Summer19UL18_JRV3_MC_ScaleFactor_AK4PFPuppi` | `Summer19UL18_V1` |
+| UL2017 | `Summer20UL17NanoV15_V1` | `Summer19UL17_JRV4_MC_ScaleFactor_AK4PFPuppi` | `Summer19UL17_V1` |
+| UL2016PreVFP | `Summer20UL16APVNanoV15_V1` | `Summer20UL16APV_JRV5_MC_ScaleFactor_AK4PFPuppi` | `Summer19UL16_V1` |
+| UL2016PostVFP | `Summer20UL16NanoV15_V1` | `Summer20UL16_JRV5_MC_ScaleFactor_AK4PFPuppi` | `Summer19UL16_V1` |
+
+For UL2017, the JME twiki's published "Recommended maps" table lists a `V2` jet-veto map; the actual `jetvetomaps.json.gz` shipped in this copy of `jsonpog-integration` only contains `V1`, so the config is deliberately set to `V1` with a comment explaining the discrepancy. Re-check if a newer `jetvetomaps.json.gz` becomes available.
+
+`Jet_btag` is set to `UParTM` (UParT Medium WP) everywhere; the numeric cut is not hardcoded in the configs - it's looked up automatically at runtime from `btagging.json.gz`'s `UParTAK4_wp_values` correction (confirmed e.g. `0.161` for UL2018 MC in a real job log). `BTagSFType` is `comb` for all eras, since UParT only ships a combined heavy-flavor SF (no separate `mujets` variant like the old DeepJet WP had).
+
+PU/JMAR/Muon/Electron SF `*Path` keys are intentionally left on their old v9-style paths for every era (not yet verified against a v15-restructured directory) - flagged with an inline comment in each config. JEC/JER/JetVeto paths, by contrast, are confirmed against real correction files.
+
+### Era-specific trigger / branch-list splits
+
+Some run periods need more than one branch list + config because the HLT menu changed mid-era:
+
+- **UL2017**: split into `Run2017B` (no `*_Mass3p8` dimuon trigger; also needs `HLT_IsoMu24_eta2p1` as the single-muon trigger) and `Run2017C-F` (has `*_Mass3p8`). Branch lists: `branchlist/UL2017/branch_list_Run2017B_v15.txt`, `branchlist/UL2017/branch_list_Run2017CtoF_v15.txt` (MC/other-data use `branchlist/UL2017/branch_list_v15.txt`, the union of both trigger sets).
+- **UL2016PostVFP**: split into `Run2016H` (needs DZ-variant dimuon/dielectron/muon-electron triggers, and drops `HLT_DoubleEle33_CaloIdL_GsfTrkIdVL`) and the base/other eras. Branch lists: `branchlist/UL2016PostVFP/branch_list_RunH_v15.txt` vs `branchlist/UL2016PostVFP/branch_list_v15.txt`.
+- **UL2016PreVFP**: no additional era split needed - one branch list/config set covers the whole era.
+
+`CondorJobs/submit_jobs_v1.py`'s `get_job_config()` and the local interactive `run_v4.sh` both implement this era routing at submission/test time (matching on the run-era substring of the data sample name, e.g. `Run2017B`, `Run2016H`); MC samples always use the base/union branch list for their run period.
 
 ## Object-Oriented Refactor (In Progress)
 
@@ -169,6 +194,171 @@ Alongside the v15 migration, the codebase is being incrementally refactored towa
 3. **`Jet` value object** (`interface/Jet.h`): `RawJet`/`CorrT1Jet` structs consolidating `Analysis::MakeJetCollection()`'s per-jet raw reads into a single pass, instead of scattered/duplicated bounds-checked array access. `SSBCorrections`' own jet-correction/MET function signatures were deliberately left unchanged in this step, since that code is the most carefully tutorial-verified part of the migration.
 
 Planned next: splitting `SSBCorrections` into per-domain classes (JEC/JER, Type-1 MET, b-tag SF, PU jet ID, lepton SF) behind a facade that preserves its current public interface, and parametrizing systematic variation (nominal/up/down) instead of ad hoc flags. See `v15_migration/NOTES.md` items 26-28 for the full rationale behind each step.
+
+## HTCondor Workflow
+
+The current Condor workflow consists of three main utilities under `CondorJobs/`:
+
+1. `submit_jobs_v1.py` — submit analysis jobs
+2. `check_jobs_v1.py` — validate job completion and identify failed jobs
+3. `run_hadd_v8.py` — check output completeness and merge ROOT files
+
+```text
+InputList
+   |
+   v
+submit_jobs_v1.py
+   |
+   v
+HTCondor jobs
+   |
+   v
+check_jobs_v1.py
+   |
+   +---- bad jobs ----> resubmit
+   |                       |
+   |<----------------------+
+   |
+   v
+run_hadd_v8.py --check-only
+   |
+   v
+run_hadd_v8.py
+   |
+   v
+<sample>.root
+```
+
+### 1. Job submission (`submit_jobs_v1.py`)
+
+Creates the analysis package, JDL files, queue files, and submits jobs to HTCondor. Two modes: normal submission, and bad-job resubmission.
+
+```bash
+python3 CondorJobs/submit_jobs_v1.py \
+    --study <STUDY> \
+    --run-period <RUN_PERIOD> \
+    --channel <CHANNEL> \
+    --input-base <INPUT_LIST_BASE> \
+    --samples <SAMPLES>
+```
+
+- Run periods: `UL2016PreVFP`, `UL2016PostVFP`, `UL2017`, `UL2018`
+- Channels: `ElEl`, `MuEl`, `MuMu`
+- Sample selectors: `all`, `data`, `mc`, or explicit sample names
+
+Example (UL2018 MuMu, all samples):
+
+```bash
+INPUT2018=/path/to/InputList/2018
+python3 CondorJobs/submit_jobs_v1.py \
+    --study NanoAODv15_v3 --run-period UL2018 --channel MuMu \
+    --input-base "$INPUT2018" --samples all
+```
+
+Useful flags:
+- `--test` — submit only the first InputList file of each selected sample
+- `--dry-run` — build the tarball/JDL/queue files but skip `condor_submit` (good for sanity-checking job config before submission)
+
+Before submission the script builds `CondorJobs/SSBNanoAODANCode.tar.gz` from the current package, excluding `input/`, `output/`, `CondorJobs/`, `.git/`, `*.o`, `ssb_analysis`, `.DS_Store`, `__pycache__/`, `*.pyc`. The tarball and the per-job InputList are transferred to the worker node.
+
+**Condor resources per job** (current):
+
+```text
+RequestCpus   = 1
+RequestMemory = 4 GB
+RequestDisk   = 10 GB
++JobType      = "short"
+```
+
+ROOT output files are *not* returned via Condor's output-transfer mechanism — `run_condor_v1.sh` stages them directly to the storage element.
+
+JDLs/queue files land under `CondorJobs/condorSubmit/<study>/<run-period>/<channel>/`; logs under `CondorJobs/condorLog/<study>/<run-period>/<channel>/<sample>/` as `<sample>_<job>.{log,out,err}`. Resubmission reuses the same log filenames, so `check_jobs_v1.py` always looks at the *latest* Condor termination record for a job's status.
+
+**Data-sample filtering by channel:**
+
+| Channel | 2016/2017 | 2018 |
+|---|---|---|
+| `MuMu` | `SingleMuon`, `DoubleMuon` | same |
+| `ElEl` | `SingleElectron`, `DoubleEG` | `EGamma`, `SingleElectron`, `DoubleEG` |
+| `MuEl` | `SingleMuon`, `SingleElectron`, `MuonEG` | `SingleMuon`, `EGamma`, `SingleElectron`, `MuonEG` |
+
+MC samples are not channel-filtered. See the "Era-specific trigger / branch-list splits" subsection above for how `UL2017`/`UL2016PostVFP` data route to the right config + branch list.
+
+### 2. Checking jobs (`check_jobs_v1.py`)
+
+Cross-checks expected jobs (from the InputList) against Condor logs, worker stdout/stderr, and the ROOT outputs on the SE.
+
+```bash
+python3 CondorJobs/check_jobs_v1.py \
+    --study NanoAODv15_v3 --run-period UL2018 --channel MuMu --samples all
+```
+
+Job statuses:
+
+- **`OK`** — analysis destructor completed, worker wrapper completed, ROOT output exists on the SE, latest Condor exit code is 0.
+- **`FAILED`** — non-zero Condor exit code or a serious stderr pattern (`segmentation violation/fault`, `Traceback`, `[ERROR]`, `fatal error`, `std::exception`, `terminate called`, `Aborted`, `core dumped`). Ordinary warnings don't count.
+- **`STAGEOUT_FAIL`** — analysis completed but the worker wrapper didn't reach normal completion (worker/stage-out problem).
+- **`OUTPUT_ONLY`** — ROOT output exists on the SE but local Condor logs are incomplete.
+- **`RUNNING`** — Condor log exists but has no termination record yet.
+- **`INCOMPLETE`** — some local logs exist but the job can't be classified as complete.
+- **`MISSING`** — no valid output and no useful Condor job info.
+- **`EMPTY_INPUT`** — the expected output is missing, but every ROOT file in that job's InputList was successfully checked with `edmFileUtil` and the total input event count is exactly zero. **Not treated as a failure.**
+
+`EMPTY_INPUT` exists because NtupleForge can legitimately produce a zero-event output (e.g. every lumisection in an input file falls outside the Golden JSON). A job is only classified `EMPTY_INPUT` if *every* input file in its list can be read and the total is exactly zero; if any file can't be checked, the job stays a genuine bad/unfinished job — this conservative behavior stops real input-access problems from being hidden as `EMPTY_INPUT`.
+
+Useful flags: `--details` (print every job, not just bad ones), `--show-errors` (print the serious stderr lines found), `--write-bad` (write `CondorJobs/bad_jobs_<study>_<run-period>_<channel>.txt` with `SAMPLE JOB_NUMBER STATUS INPUT_LIST_PATH` per line; `OK` and `EMPTY_INPUT` jobs are excluded).
+
+### 3. Resubmitting failed jobs
+
+Feed the bad-job file straight back into `submit_jobs_v1.py`:
+
+```bash
+python3 CondorJobs/submit_jobs_v1.py \
+    --study NanoAODv15_v3 --run-period UL2018 --channel MuMu \
+    --bad-jobs CondorJobs/bad_jobs_NanoAODv15_v3_UL2018_MuMu.txt
+```
+
+`--input-base` isn't needed here since the bad-job file already has the full InputList path. Re-run `check_jobs_v1.py` afterward (it reuses the latest termination record automatically) and repeat until `Bad / unfinished : 0`.
+
+### 4. Checking and merging outputs (`run_hadd_v8.py`)
+
+```bash
+python3 CondorJobs/run_hadd_v8.py \
+    --study NanoAODv15_v3 --run-period UL2018 --channel MuMu \
+    --input-base "$INPUT2018" --samples all --check-only
+```
+
+For every `<sample>_<job>.list` in the InputList, expects a matching `<sample>_<job>.root` in the output directory (`/pnfs/knu.ac.kr/data/cms/store/user/${USER}/CPV_Run2/ULSummer20/<study>/<run-period>/<channel>/<sample>/`). Missing outputs are re-checked with `edmFileUtil`: if every corresponding input file has zero events, the chunk is `EMPTY_INPUT` and excluded from hadd (no output expected); otherwise it stays `MISSING` and hadd is skipped for that sample. An existing output file is always treated as a valid chunk, even if it contains zero selected events after the analysis cuts.
+
+Missing chunks (genuine) get a report written to `<sample>_missing_check.log` next to the output, with expected/found/missing counts and the missing job numbers/paths.
+
+Once the check is clean, drop `--check-only` to actually run `hadd`:
+
+```bash
+python3 CondorJobs/run_hadd_v8.py \
+    --study NanoAODv15_v3 --run-period UL2018 --channel MuMu \
+    --input-base "$INPUT2018" --samples all
+```
+
+Output: `<sample>/<sample>.root` + `<sample>/<sample>_hadd.log`. Already-merged samples are skipped unless `--recreate` is given (runs `hadd -f`). `--dry-run` shows what would be merged without running `hadd`.
+
+### 5. Recommended production loop
+
+```text
+submit (all) -> check (--write-bad) -> resubmit bad jobs -> check again -> ... -> 0 bad
+   -> hadd --check-only (confirm 0 genuinely missing) -> hadd
+```
+
+### Notes on the three scripts
+
+- `submit_jobs_v1.py` and `run_hadd_v8.py` take the InputList base via `--input-base`; `check_jobs_v1.py` currently has its InputList location hardcoded in the script itself (not yet unified to `--input-base` - a possible future cleanup).
+- `EMPTY_INPUT` is a legitimate upstream zero-event condition, not an analysis failure, and is handled consistently by both `check_jobs_v1.py` and `run_hadd_v8.py`.
+- `run_hadd_v8.py` never silently assumes a missing output is a zero-event case - if it can't verify that with `edmFileUtil`, the chunk stays `MISSING` and blocks hadd for that sample.
+
+## Recent Fixes
+
+- **`SetUpKINObs()` degenerate-solution guard was killing every good KinReco solution** (`src/Analysis.cpp`): the `isKinSol = false;` line sat outside the `if (Top.Energy() < 0.01)` braces, so it ran unconditionally whenever `isKinSol` had just been set `true` - discarding every successful kinematic reconstruction, not just genuinely degenerate (near-zero-energy) ones. This made `h_Lep1pt_8` (AfterTopReconstruction) and the CP-observable histogram `h_Reco_CPO1_ReRange` empty for every sample. Fixed by requiring `isKinSol && Top.Energy() < 0.01` (and the `AnTop` equivalent) before resetting. Verified on a local UL2018 `TTbar_Signal` test: `h_Lep1pt_8` went from 0 to 15985 entries, consistent with the expected KinReco efficiency relative to `h_Lep1pt_5` (AfterBTagMultiplicity, 17689 entries).
+- **UL2017 `JetVetoName` reverted `V2 -> V1`**: an earlier change (based on the JME twiki's published "Recommended maps" table) set `Summer19UL17_V2`, but the actual `jetvetomaps.json.gz` in this copy of `jsonpog-integration` only defines `Summer19UL17_V1`. Reverted across all 11 UL2017 configs with a comment explaining the discrepancy.
 
 ## Notes
 - Ensure that ROOT is properly installed and configured before running the analysis.
