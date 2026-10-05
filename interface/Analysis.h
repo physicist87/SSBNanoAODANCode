@@ -92,6 +92,15 @@ private:
     TString METtype;
     TString applyMETXY;
     TString applyRochester;
+    // Electron energy scale (data) / smearing (MC) switch, same style as
+    // applyRochester. Effective value: true only if the config asks for it AND
+    // the correction file loaded AND the needed branches exist (see
+    // Analysis ctor); otherwise raw Electron_pt is used.
+    TString applyElecSS;
+    bool    elecSSActive_ = false;
+    // Per-event, per-electron pt used by ALL electron selection (pt cuts,
+    // veto) and by pre_elecs; equals raw Electron_pt when elecSSActive_ is false.
+    std::vector<float> elec_pt_corr_;
 
 
     TString cutflowName[10];

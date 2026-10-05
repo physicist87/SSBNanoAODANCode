@@ -455,6 +455,36 @@ SSBCorrections::SSBCorrections(TextReader* reader, const std::string inputfileNa
        jetvetomap_ = nullptr;
     }
 
+    // Electron energy scale (data) / smearing (MC). Optional: if ElecSSPath is
+    // unset or fails to load, GetElecSSCorrectedPt() returns raw pt and
+    // Analysis (which owns the applyElecSS switch) warns once if it was asked
+    // to apply it. Correction names are config keys, not hardcoded, so a
+    // future EGM file layout change only needs a config edit.
+    {
+        const std::string elecSSPath   = reader->Check("ElecSSPath") ? reader->GetText("ElecSSPath") : "";
+        const std::string elecScaleNm  = reader->Check("ElecScaleName") ? reader->GetText("ElecScaleName") : "Scale";
+        const std::string elecSmearNm  = reader->Check("ElecSmearName") ? reader->GetText("ElecSmearName") : "SmearAndSyst";
+        elec_ss_sys_ = reader->Check("ElecSSSys") ? reader->GetText("ElecSSSys") : "nominal";
+        if (elec_ss_sys_ != "nominal") {
+            logger_.Warning() << "ElecSSSys='" << elec_ss_sys_ << "' is not implemented (only 'nominal') - using nominal." << std::endl;
+            elec_ss_sys_ = "nominal";
+        }
+        if (!elecSSPath.empty()) {
+            try {
+                auto ssSet = correction::CorrectionSet::from_file(jsonDir + elecSSPath);
+                elec_scale_ = ssSet->compound().at(elecScaleNm);
+                elec_smear_ = ssSet->at(elecSmearNm);
+                logger_.Info() << "Loaded electron scale ('" << elecScaleNm << "') & smearing ('"
+                               << elecSmearNm << "') from " << elecSSPath << std::endl;
+            } catch (const std::exception& e) {
+                elec_scale_.reset();
+                elec_smear_.reset();
+                logger_.Warning() << "Could not load ElecSSPath=" << elecSSPath << " (" << e.what()
+                                  << "). Electron scale/smearing unavailable - raw Electron_pt will be used." << std::endl;
+            }
+        }
+    }
+
     if (btag_sf_type_ != "comb" && btag_sf_type_ != "mujets") {
         logger_.Warning() << "Invalid BTagSFType: " << btag_sf_type_
                   << ". Using default 'comb'." << std::endl;
@@ -1431,6 +1461,53 @@ double SSBCorrections::RochesterCorrectionMC(TString year, int Q, double pt, dou
     if(genMatch) correction = rc.kSpreadMC(Q,pt,eta,phi,genPt,s,m);
     else if(!genMatch){u = gRandom->Rndm(); correction = rc.kSmearMC(Q,pt,eta,phi,nl,u,s,m);} //Random number is needed when gen-mathcing is failed
     return correction;
+}
+
+double SSBCorrections::DeterministicGaussian(unsigned long long key) {
+    // splitmix64: a stateless 64-bit mixer - the same key always yields the
+    // same value, on any platform/compiler.
+    auto mix = [](unsigned long long& x) {
+        x += 0x9E3779B97F4A7C15ULL;
+        unsigned long long z = x;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        return z ^ (z >> 31);
+    };
+    unsigned long long state = key;
+    // Two uniforms in (0,1]: top 53 bits -> [0,1), +1 ulp shift keeps u1 > 0 for log().
+    const double u1 = (static_cast<double>(mix(state) >> 11) + 1.0) * (1.0 / 9007199254740993.0);
+    const double u2 =  static_cast<double>(mix(state) >> 11)        * (1.0 / 9007199254740992.0);
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
+}
+
+double SSBCorrections::GetElecSSCorrectedPt(bool isData, unsigned int run, double pt, double scEta,
+                                            double r9, int seedGain, unsigned long long rngKey) const {
+    if (!ElecSSLoaded()) return pt;
+    if (!std::isfinite(pt) || !std::isfinite(scEta) || !std::isfinite(r9) || pt <= 0.0) return pt;
+
+    try {
+        double newPt = pt;
+        if (isData) {
+            const double scale = elec_scale_->evaluate({std::string("scale"), static_cast<double>(run),
+                                                        scEta, r9, pt, static_cast<double>(seedGain)});
+            if (!std::isfinite(scale) || scale <= 0.0) return pt;
+            newPt = pt * scale;
+        } else {
+            const double rho = elec_smear_->evaluate({std::string("smear"), pt, r9, scEta});
+            if (!std::isfinite(rho)) return pt;
+            newPt = pt * (1.0 + rho * DeterministicGaussian(rngKey));
+        }
+        return (std::isfinite(newPt) && newPt > 0.0) ? newPt : pt;
+    } catch (const std::exception& e) {
+        // Out-of-range input etc.: fall back to raw pt rather than aborting the job.
+        static bool warned = false;
+        if (!warned) {
+            logger_.Warning() << "GetElecSSCorrectedPt: evaluate failed (" << e.what()
+                              << ") - using raw pt (further failures not logged)." << std::endl;
+            warned = true;
+        }
+        return pt;
+    }
 }
 
 

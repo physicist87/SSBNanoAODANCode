@@ -326,6 +326,36 @@ void Analysis::SetVariables() {
 
     applyRochester = ReadValidatedBoolConfig(SSBConfReader.get(), "applyRochester", "False", logger_);
     logger_.Info() << "  apply Rochester correction: " << applyRochester << std::endl;
+
+    // Electron energy scale (data) / smearing (MC). NanoAODv15 Run2UL no longer
+    // ships a pre-corrected Electron_pt (v9 did) - see EGM's changes.md. Needs
+    // ElecSSPath in the config AND Electron_r9 / Electron_seedGain in the
+    // branch list; if either is missing this stays OFF and says why (loudly),
+    // rather than silently running on uncorrected pt.
+    if (!SSBConfReader->Check("applyElecSS")) {
+        logger_.Warning() << "applyElecSS not set in config - defaulting to False (raw Electron_pt). "
+                          << "NanoAODv15 needs it True for electron channels." << std::endl;
+    }
+    applyElecSS = ReadValidatedBoolConfig(SSBConfReader.get(), "applyElecSS", "False", logger_);
+    elecSSActive_ = false;
+    {
+        const std::string ch = SSBConfReader->GetText("Channel");
+        const bool channelHasElec = (ch.find("elec") != std::string::npos || ch.find("muel") != std::string::npos);
+        if (applyElecSS == "True" && channelHasElec) {
+            if (!SSBCorr->ElecSSLoaded()) {
+                logger_.Error() << "applyElecSS=True but the electron scale/smearing correction is not loaded "
+                                << "(check ElecSSPath/ElecScaleName/ElecSmearName). Using RAW Electron_pt!" << std::endl;
+            } else if (!branchReader_.BranchIsAvailable("Electron_r9") ||
+                       !branchReader_.BranchIsAvailable("Electron_seedGain")) {
+                logger_.Error() << "applyElecSS=True but Electron_r9 / Electron_seedGain are not available "
+                                << "(add them to the branch list). Using RAW Electron_pt!" << std::endl;
+            } else {
+                elecSSActive_ = true;
+            }
+        }
+    }
+    logger_.Info() << "  apply electron scale/smearing: " << applyElecSS
+                   << " (active: " << (elecSSActive_ ? "yes" : "no") << ")" << std::endl;
 }
 
 void Analysis::SetObjectVariable() {
@@ -1398,7 +1428,7 @@ void Analysis::LeptonSelector() {
         Int_t nel = elecs_pt->GetSize();
         for (int i = 0; i < nel; ++i) {
             // Skip electrons that don't pass selection criteria
-            if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
+            if (!passKinematicCuts(elec_pt_corr_[i], elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), eleid_scbcut) ||
                 (fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
                  fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
@@ -1450,7 +1480,7 @@ void Analysis::LeptonSelector() {
         if (!v_muon_idx.empty()) {
             for (int i = 0; i < nel; ++i) {
                 // Skip electrons that don't pass selection criteria
-                if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
+                if (!passKinematicCuts(elec_pt_corr_[i], elecs_eta->At(i), elec_pt, elec_eta) ||
                     !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), eleid_scbcut) ||
                    (fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
                    fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
@@ -1602,13 +1632,50 @@ void Analysis::MakeMuonCollection() {
 
 
 void Analysis::MakeElecCollection() {
-    // Electron collection logic
+    // Builds pre_elecs and elec_pt_corr_ (per-electron pt actually used for
+    // selection). With elecSSActive_, pt is the EGM scale (data) / smearing (MC)
+    // corrected value; otherwise it is the raw Electron_pt. All electron
+    // selection/veto code must read elec_pt_corr_[i], not elecs_pt->At(i).
     pre_elecs.clear();
-    for (int iele = 0; iele < elecs_pt->GetSize(); ++iele){
-        pre_elecs.push_back(createLorentzVector(elecs_pt->At(iele), elecs_eta->At(iele), elecs_phi->At(iele), elecs_M->At(iele) )); 
+    elec_pt_corr_.clear();
+
+    if (elecs_pt == nullptr || elecs_eta == nullptr || elecs_phi == nullptr || elecs_M == nullptr) {
+        logger_.Error() << "Error: Some electron branch pointers are null in MakeElecCollection()" << std::endl;
+        return;
     }
- 
-    return;
+
+    const Int_t nel = elecs_pt->GetSize();
+    pre_elecs.reserve(nel);
+    elec_pt_corr_.reserve(nel);
+
+    unsigned int run = 0, lumi = 0;
+    unsigned long long evt = 0;
+    TTreeReaderArray<Float_t>* r9 = nullptr;
+    TTreeReaderArray<Float_t>* dEtaSC = nullptr;
+    if (elecSSActive_) {
+        run  = branchReader_.RequiredUIntValue("run");
+        lumi = branchReader_.RequiredUIntValue("luminosityBlock");
+        evt  = branchReader_.RequiredULongValue("event");
+        r9     = branchReader_.RequiredFloatArray("Electron_r9");
+        dEtaSC = branchReader_.RequiredFloatArray("Electron_deltaEtaSC");
+    }
+
+    for (int iele = 0; iele < nel; ++iele) {
+        double pt = elecs_pt->At(iele);
+        if (elecSSActive_ && r9 && dEtaSC) {
+            // Key = hash of (run, lumi, event, electron index): the MC smearing
+            // gaussian depends only on this electron, never on processing order
+            // or job splitting, so reruns reproduce exactly.
+            unsigned long long key = 0x243F6A8885A308D3ULL;
+            auto mixIn = [&key](unsigned long long v) { key = (key ^ v) * 0x9E3779B97F4A7C15ULL; key ^= key >> 29; };
+            mixIn(run); mixIn(lumi); mixIn(evt); mixIn(static_cast<unsigned long long>(iele));
+            const double scEta = elecs_eta->At(iele) + dEtaSC->At(iele);
+            const int gain = static_cast<int>(branchReader_.GetIntArrayValue("Electron_seedGain", iele));
+            pt = SSBCorr->GetElecSSCorrectedPt(isData, run, pt, scEta, r9->At(iele), gain, key);
+        }
+        elec_pt_corr_.push_back(static_cast<float>(pt));
+        pre_elecs.push_back(createLorentzVector(pt, elecs_eta->At(iele), elecs_phi->At(iele), elecs_M->At(iele)));
+    }
 }
 
 void Analysis::MakeJetCollection() {
@@ -2348,7 +2415,7 @@ void Analysis::SelectVetoElectrons() {
         Int_t nel = elecs_pt->GetSize();
         for (int iel = 0; iel < nel; ++iel) {
             // Apply cuts
-            if (!passKinematicCuts(elecs_pt->At(iel), elecs_eta->At(iel), elec_pt, elec_eta) ||
+            if (!passKinematicCuts(elec_pt_corr_[iel], elecs_eta->At(iel), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", iel), elevetoid_scbcut) ||
                 (fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[iel] + elecs_eta->At(iel)) > 1.4442 &&
                  fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[iel] + elecs_eta->At(iel)) < 1.566) ||
@@ -2372,7 +2439,7 @@ void Analysis::SelectVetoElectrons() {
             }
             
             // Apply cuts (same logic as in LeptonSelector)
-            if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
+            if (!passKinematicCuts(elec_pt_corr_[i], elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), elevetoid_scbcut) ||
                 (fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
                  fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
@@ -2396,7 +2463,7 @@ void Analysis::SelectVetoElectrons() {
             }
             
             // Apply cuts (same logic as in LeptonSelector)
-            if (!passKinematicCuts(elecs_pt->At(i), elecs_eta->At(i), elec_pt, elec_eta) ||
+            if (!passKinematicCuts(elec_pt_corr_[i], elecs_eta->At(i), elec_pt, elec_eta) ||
                 !elecSCBId(branchReader_.GetIntArrayValue("Electron_cutBased", i), elevetoid_scbcut) ||
                 (fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) > 1.4442 &&
                  fabs((*branchReader_.RequiredFloatArray("Electron_deltaEtaSC"))[i] + elecs_eta->At(i)) < 1.566) ||
@@ -2552,7 +2619,6 @@ bool Analysis::NumbJetCut(std::vector<int> v_jets)
    if ( v_jets.size() >= 1 ){ numbjetcut = true; }
    return numbjetcut;
 }
-
 void Analysis::SetUpKINObs()
 {
    isKinSol=false;
@@ -2572,10 +2638,10 @@ void Analysis::SetUpKINObs()
    auto kinematicReconstruction = std::make_unique<KinematicReconstruction>(1, true);
 
    const LV met_LV = common::TLVtoLV(Met);
-
+   
    // Create a map to translate from original jet indices to new indices in v_jets_VLV
    std::map<int, int> jet_idx_map;
-
+   
    for (int i = 0; i < v_jet_idx.size(); ++i)
    {
       int idx_jet = v_jet_idx[i];
@@ -2592,15 +2658,15 @@ void Analysis::SetUpKINObs()
          v_bjetidx_KIN.push_back(jet_idx_map[orig_idx]);
       }
    }
-
+   
 
    // Only proceed if we have valid b-jet indices
    if (!v_bjetidx_KIN.empty() && v_jets_VLV.size() > 0) {
-      KinematicReconstructionSolutions kinematicReconstructionSolutions =
-         kinematicReconstruction->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN,
-                                         v_bjetidx_KIN, v_leptons_VLV, v_jets_VLV,
+      KinematicReconstructionSolutions kinematicReconstructionSolutions = 
+         kinematicReconstruction->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN, 
+                                         v_bjetidx_KIN, v_leptons_VLV, v_jets_VLV, 
                                          jets_btag_vec, met_LV);
-
+                                         
       if (kinematicReconstructionSolutions.numberOfSolutions()) {
          isKinSol= true;
          LV top1 = kinematicReconstructionSolutions.solution().top();
@@ -2609,7 +2675,7 @@ void Analysis::SetUpKINObs()
          LV bjet2 = kinematicReconstructionSolutions.solution().antiBjet();
          LV neutrino1 = kinematicReconstructionSolutions.solution().neutrino();
          LV neutrino2 = kinematicReconstructionSolutions.solution().antiNeutrino();
-
+         
          Top       = common::LVtoTLV(top1);
          AnTop     = common::LVtoTLV(top2);
          bJet      = common::LVtoTLV(bjet1);
@@ -2619,31 +2685,30 @@ void Analysis::SetUpKINObs()
 
          W1        = Lep  + AnNu;
          W2        = AnLep  + Nu;
+
+         // TEMPORARY WORKAROUND: KinematicReconstruction occasionally reports
+         // numberOfSolutions()>0 but hands back a degenerate (near-zero
+         // energy) top/antitop - i.e. it didn't really find a solution. Catch
+         // that here and force isKinSol back to false so downstream code
+         // doesn't treat a degenerate solution as valid. (This check existed
+         // before the raw-pointer->unique_ptr RAII cleanup but was
+         // accidentally dropped along with the old manual `delete
+         // kinematicReconstruction;` it sat next to - re-added here, with the
+         // original's bug fixed: the old version unconditionally set
+         // isKinSol=false in the first block, so the AnTop check never ran.)
+         if (Top.Energy() < 0.01) {
+            logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
+                               << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
+            isKinSol = false;
+         } else if (AnTop.Energy() < 0.01) {
+            logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
+                               << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
+            isKinSol = false;
+         }
       }
    } else {
       logger_.Warning() << "Not enough b-jets or jets for kinematic reconstruction" << std::endl;
    }
-
-   // TEMPORARY WORKAROUND: KinematicReconstruction occasionally reports
-   // numberOfSolutions()>0 but hands back a degenerate (near-zero energy)
-   // top/antitop - i.e. it didn't really find a solution. Catch that here
-   // and force isKinSol back to false so downstream code doesn't treat a
-   // degenerate solution as valid.
-   // NOTE: fixed a bug here where "isKinSol = false;" sat OUTSIDE the
-   // "if (Top.Energy() < 0.01)" braces, so it ran unconditionally whenever
-   // isKinSol was true - killing every good solution, not just degenerate
-   // ones. That's why h_Lep1pt_8 / h_Reco_CPO1_ReRange were always empty.
-   if (isKinSol && Top.Energy() < 0.01) {
-      logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
-                         << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
-      isKinSol = false;
-   } else if (isKinSol && AnTop.Energy() < 0.01) {
-      logger_.Warning() << "Degenerate KinReco solution: Top.Energy()=" << Top.Energy()
-                         << " AnTop.Energy()=" << AnTop.Energy() << std::endl;
-      isKinSol = false;
-   }
-   // Clean up
-
 }
 
 void Analysis::LeptonSFApply()

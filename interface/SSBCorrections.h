@@ -174,6 +174,22 @@ public:
     float GetPUJetIDSFAndEff(float pt, float eta, bool passPU, bool genMatched, const std::string& wp, const std::string& syst, bool getEff = false) const;
     double RochesterCorrectionData(TString year, int Q, double pt, double eta, double phi, int s,int m) const;
     double RochesterCorrectionMC(TString year, int Q, double pt, double eta,double phi,int genID,double genPt,int nl, int s,int m) const;
+
+    // Electron energy scale (data) / smearing (MC) from EGM's
+    // electronSS_EtDependent.json.gz. NanoAODv15 Run2UL no longer ships
+    // Electron_pt pre-corrected (it did in v9) - see the EGM changes.md.
+    //   data: pt * Scale(syst, run, ScEta, r9, pt, seedGain)       [compound]
+    //   MC:   pt * (1 + rho * N(0,1)), rho = SmearAndSyst(syst, pt, r9, ScEta)
+    // rngKey makes the MC N(0,1) a pure function of the key (no RNG state), so
+    // results are reproducible regardless of job splitting/ordering/reruns.
+    // Returns raw pt unchanged if the correction wasn't loaded, any input is
+    // not finite, or the correction returns a non-finite / non-positive value.
+    bool ElecSSLoaded() const { return elec_scale_ != nullptr && elec_smear_ != nullptr; }
+    double GetElecSSCorrectedPt(bool isData, unsigned int run, double pt, double scEta,
+                                double r9, int seedGain, unsigned long long rngKey) const;
+    // Deterministic N(0,1) from a 64-bit key (splitmix64 + Box-Muller; no
+    // std::normal_distribution, whose output is implementation-defined).
+    static double DeterministicGaussian(unsigned long long key);
     // EM-fraction veto cut only (kMaxEmFrac=0.90) - pt/jetId pre-selection
     // is already applied by the only caller, Analysis::JetSelector.
     bool ShouldVetoJet(const TLorentzVector& jet, double chEmEF = 0.0, double neEmEF = 0.0) const;
@@ -248,6 +264,12 @@ private:
     std::shared_ptr<const correction::Correction> jes_unc_source_;
     std::string jes_sys_dir_; // "up" or "down"; only meaningful if jes_unc_source_ is loaded
     std::shared_ptr<const correction::Correction> pujetid_sf_; // PU JetID SF
+
+    // Electron scale & smearing (see GetElecSSCorrectedPt). Both nullptr =
+    // not configured/loaded -> raw Electron_pt is used.
+    std::shared_ptr<const correction::CompoundCorrection> elec_scale_;
+    std::shared_ptr<const correction::Correction> elec_smear_;
+    std::string elec_ss_sys_ = "nominal"; // only "nominal" is implemented
 
     // B-tagging corrections map
     std::map<std::string, std::shared_ptr<const correction::Correction>> btag_corrections_;

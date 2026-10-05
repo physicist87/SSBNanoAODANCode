@@ -149,6 +149,8 @@ Electron_phi, electron, Float_t, vector
 Electron_eta, electron, Float_t, vector
 Electron_mass, electron, Float_t, vector
 Electron_deltaEtaSC, electron, Float_t, vector
+Electron_r9, electron, Float_t, vector
+Electron_seedGain, electron, UChar_t, vector
 Electron_tightCharge, electron, UChar_t, vector
 Electron_charge, electron, Int_t, vector
 Electron_cutBased, electron, UChar_t, vector
