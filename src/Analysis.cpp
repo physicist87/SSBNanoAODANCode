@@ -116,7 +116,16 @@ Analysis::Analysis(TChain *inputChain, std::string inputName, std::string seDirN
     cutflowName[selectionIndex(SelectionStage::Reserved7)] = "bTagged Jet == 2";
     cutflowName[selectionIndex(SelectionStage::AfterTopReconstruction)] = "Top-Recon.";
     cutflowName[selectionIndex(SelectionStage::Reserved9)] = "Top-Pt-Rewight";
- 
+
+    // Read here (not in SetVariables) because Start() -> DeclareHistos() needs it.
+    // Missing key -> normal analysis; a malformed value still throws.
+    isDYEstimation_ = SSBConfReader->Check("DYEstimation") &&
+                      ReadValidatedBoolConfig(SSBConfReader.get(), "DYEstimation", "False", logger_) == "True";
+    logger_.Info() << "[DYEstimation] " << (isDYEstimation_ ? "ON" : "OFF") << std::endl;
+    if (isDYEstimation_) {
+        cutflowName[selectionIndex(SelectionStage::AfterZVeto)] = "Step_2 (no ZVeto, DY mode)";
+    }
+
     pi = TMath::Pi();
     Start();
 }
@@ -764,6 +773,41 @@ void Analysis::FillControlPlots(SelectionStage stage, bool includeJets, bool inc
     if (includeBJets) {
         FillHisto( h_Num_bJets[i], v_bjet_idx.size(), evt_weight_ );
     }
+
+    if (isDYEstimation_) {
+        FillHisto( h_cf_DiLepMass[i], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+    }
+}
+
+void Analysis::FillInvMETControlPlots(SelectionStage stage, bool includeJets, bool includeBJets) {
+    if (!isDYEstimation_) return;
+    const std::size_t i = selectionIndex(stage);
+
+    FillHisto( h_NoMETCut_DiLepMass[i],    ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+    FillHisto( h_cf_NoMETCut_DiLepMass[i], ( (Lep1)+(Lep2) ).M(), evt_weight_ );
+    FillHisto( h_NoMETCut_Num_PV[i],  num_pv,      evt_weight_ );
+    FillHisto( h_NoMETCut_Lep1pt[i] , (Lep1).Pt()  , evt_weight_ );
+    FillHisto( h_NoMETCut_Lep1eta[i], (Lep1).Eta() , evt_weight_ );
+    FillHisto( h_NoMETCut_Lep1phi[i], (Lep1).Phi() , evt_weight_ );
+    FillHisto( h_NoMETCut_Lep2pt[i] , (Lep2).Pt()  , evt_weight_ );
+    FillHisto( h_NoMETCut_Lep2eta[i], (Lep2).Eta() , evt_weight_ );
+    FillHisto( h_NoMETCut_Lep2phi[i], (Lep2).Phi() , evt_weight_ );
+    FillHisto( h_NoMETCut_METpt[i]  , Met.Pt()     , evt_weight_ );
+    FillHisto( h_NoMETCut_METphi[i] , Met.Phi()    , evt_weight_ );
+    FillHisto( h_NoMETCut_Num_Jets[i], v_jet_idx.size(), evt_weight_ );
+
+    if (includeJets) {
+        FillHisto( h_NoMETCut_Jet1pt[i] , (Jet1).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet1eta[i], (Jet1).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet1phi[i], (Jet1).Phi() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2pt[i] , (Jet2).Pt()  , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2eta[i], (Jet2).Eta() , evt_weight_ );
+        FillHisto( h_NoMETCut_Jet2phi[i], (Jet2).Phi() , evt_weight_ );
+    }
+
+    if (includeBJets) {
+        FillHisto( h_NoMETCut_Num_bJets[i], v_bjet_idx.size(), evt_weight_ );
+    }
 }
 
 // Event loop function
@@ -884,15 +928,31 @@ void Analysis::Loop() {
         // out here before this consolidation - left out on purpose).
         FillControlPlots(SelectionStage::AfterDileptonCuts, /*includeJets=*/false, /*includeBJets=*/false);
 
-        if (ZVetoCut() == false) {traceCutFail("ZVetoCut"); continue;}
+        // DY mode: no Z-veto here, so stages 2-5 keep Z-window events for R_out/in.
+        if (!isDYEstimation_ && ZVetoCut() == false) {traceCutFail("ZVetoCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterZVeto, /*includeJets=*/false, /*includeBJets=*/false);
+        FillInvMETControlPlots(SelectionStage::AfterZVeto, /*includeJets=*/false, /*includeBJets=*/false);
 
         if (NumJetCut(v_jet_idx) == false) {traceCutFail("NumJetCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterJetMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
+        FillInvMETControlPlots(SelectionStage::AfterJetMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
 
-        if (METCut(Met) == false) {traceCutFail("METCut"); continue;}
+        if (METCut(Met) == false) {
+            if (!isDYEstimation_) {traceCutFail("METCut"); continue;}
+
+            // DY mode: MET-inverted region (MET <= 40), filled into h_NoMETCut_* stages 4,5.
+            FillInvMETControlPlots(SelectionStage::AfterMETCut, /*includeJets=*/true, /*includeBJets=*/false);
+
+            BTaggingSFApply();
+
+            if (NumbJetCut(v_bjet_idx) == false) {traceCutFail("NumbJetCut (MET-inverted)"); continue;}
+
+            FillInvMETControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
+            traceCutFail("METCut (DY mode, MET-inverted region filled)");
+            continue;
+        }
 
         FillControlPlots(SelectionStage::AfterMETCut, /*includeJets=*/true, /*includeBJets=*/false);
 
@@ -901,6 +961,11 @@ void Analysis::Loop() {
         if (NumbJetCut(v_bjet_idx) == false) {traceCutFail("NumbJetCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
+
+        // DY mode: KinReco/CPO kept as a test, but only for Z-veto passing
+        // events so these histograms stay comparable to the normal mode.
+        if (isDYEstimation_ && ZVetoCut() == false) {traceCutFail("ZVetoCut (DY mode, before KinReco)"); continue;}
+
         SetUpKINObs();
         if (!isKinSol) {
             traceCutFail("KinSolv (no solution)");
@@ -2212,6 +2277,31 @@ void Analysis::DeclareHistos()
       h_Num_PV[i]    = new TH1D(Form("h_Num_PV_%d",i),     Form("Num of Primary Vertex after %s",cutflowName[i].Data()), 100, 0.0, 100); h_Num_PV[i]->Sumw2();
       h_Num_Jets[i]  = new TH1D(Form("h_Num_Jets_%d",i), Form("Num. of Jets after %s",cutflowName[i].Data()), 20, 0.0, 20); h_Num_Jets[i]->Sumw2();
       h_Num_bJets[i] = new TH1D(Form("h_Num_bJets_%d",i),Form("Num. of b Jets after %s",cutflowName[i].Data()), 20, 0.0, 20); h_Num_bJets[i]->Sumw2();
+
+      if (isDYEstimation_) {
+         // 1 GeV bins so the Z-window edges (76, 106) fall on bin edges.
+         h_cf_DiLepMass[i] = new TH1D(Form("h_cf_DiLepMass_%d",i),Form("Di-Lepton Invariant Mass for cutflow %s",cutflowName[i].Data()), 300, 0.0, 300); h_cf_DiLepMass[i]->Sumw2();
+
+         h_NoMETCut_Lep1pt[i]  = new TH1D(Form("h_NoMETCut_Lep1pt_%d" ,i), Form("NoMETCut Leading Lepton pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Lep1pt[i]->Sumw2();
+         h_NoMETCut_Lep2pt[i]  = new TH1D(Form("h_NoMETCut_Lep2pt_%d" ,i), Form("NoMETCut Second Leading Lepton pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Lep2pt[i]->Sumw2();
+         h_NoMETCut_Lep1eta[i] = new TH1D(Form("h_NoMETCut_Lep1eta_%d",i), Form("NoMETCut Leading Lepton Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Lep1eta[i]->Sumw2();
+         h_NoMETCut_Lep2eta[i] = new TH1D(Form("h_NoMETCut_Lep2eta_%d",i), Form("NoMETCut Second Leading Lepton Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Lep2eta[i]->Sumw2();
+         h_NoMETCut_Lep1phi[i] = new TH1D(Form("h_NoMETCut_Lep1phi_%d",i), Form("NoMETCut Leading Lepton Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Lep1phi[i]->Sumw2();
+         h_NoMETCut_Lep2phi[i] = new TH1D(Form("h_NoMETCut_Lep2phi_%d",i), Form("NoMETCut Second Leading Lepton Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Lep2phi[i]->Sumw2();
+         h_NoMETCut_Jet1pt[i]  = new TH1D(Form("h_NoMETCut_Jet1pt_%d" ,i), Form("NoMETCut Leading Jet pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Jet1pt[i]->Sumw2();
+         h_NoMETCut_Jet2pt[i]  = new TH1D(Form("h_NoMETCut_Jet2pt_%d" ,i), Form("NoMETCut Second Leading Jet pT %s",cutflowName[i].Data()), 250, 0.0, 250); h_NoMETCut_Jet2pt[i]->Sumw2();
+         h_NoMETCut_Jet1eta[i] = new TH1D(Form("h_NoMETCut_Jet1eta_%d",i), Form("NoMETCut Leading Jet Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Jet1eta[i]->Sumw2();
+         h_NoMETCut_Jet2eta[i] = new TH1D(Form("h_NoMETCut_Jet2eta_%d",i), Form("NoMETCut Second Leading Jet Eta %s",cutflowName[i].Data()), 50, -2.5, 2.5); h_NoMETCut_Jet2eta[i]->Sumw2();
+         h_NoMETCut_Jet1phi[i] = new TH1D(Form("h_NoMETCut_Jet1phi_%d",i), Form("NoMETCut Leading Jet Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Jet1phi[i]->Sumw2();
+         h_NoMETCut_Jet2phi[i] = new TH1D(Form("h_NoMETCut_Jet2phi_%d",i), Form("NoMETCut Second Leading Jet Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_Jet2phi[i]->Sumw2();
+         h_NoMETCut_METpt[i]   = new TH1D(Form("h_NoMETCut_METpt_%d"  ,i), Form("NoMETCut MET pT %s",cutflowName[i].Data()), 200, 0.0, 200); h_NoMETCut_METpt[i]->Sumw2();
+         h_NoMETCut_METphi[i]  = new TH1D(Form("h_NoMETCut_METphi_%d" ,i), Form("NoMETCut MET Phi %s",cutflowName[i].Data()), 24, -1*pi, pi); h_NoMETCut_METphi[i]->Sumw2();
+         h_NoMETCut_DiLepMass[i]    = new TH1D(Form("h_NoMETCut_DiLepMass_%d",i),Form("NoMETCut Di-Lepton Invariant Mass %s",cutflowName[i].Data()), 300, 0.0, 300); h_NoMETCut_DiLepMass[i]->Sumw2();
+         h_cf_NoMETCut_DiLepMass[i] = new TH1D(Form("h_cf_NoMETCut_DiLepMass_%d",i),Form("NoMETCut Di-Lepton Invariant Mass for cutflow %s",cutflowName[i].Data()), 300, 0.0, 300); h_cf_NoMETCut_DiLepMass[i]->Sumw2();
+         h_NoMETCut_Num_PV[i]    = new TH1D(Form("h_NoMETCut_Num_PV_%d",i),    Form("NoMETCut Num of Primary Vertex %s",cutflowName[i].Data()), 100, 0.0, 100); h_NoMETCut_Num_PV[i]->Sumw2();
+         h_NoMETCut_Num_Jets[i]  = new TH1D(Form("h_NoMETCut_Num_Jets_%d",i),  Form("NoMETCut Num of Jets %s",cutflowName[i].Data()), 20, 0.0, 20); h_NoMETCut_Num_Jets[i]->Sumw2();
+         h_NoMETCut_Num_bJets[i] = new TH1D(Form("h_NoMETCut_Num_bJets_%d",i), Form("NoMETCut Num of b Jets %s",cutflowName[i].Data()), 20, 0.0, 20); h_NoMETCut_Num_bJets[i]->Sumw2();
+      }
     }
 
     h_JetPUIDEvtWeight  = new TH1D(Form("h_JetPUIDEvtWeight"), Form("PUJetID Events Weight "), 200, 0.0, 2.0); h_JetPUIDEvtWeight->Sumw2(); 
@@ -2602,6 +2692,9 @@ bool Analysis::NumJetCut(std::vector<int> v_jets)
 bool Analysis::METCut(TLorentzVector met)        
 {           
    bool metcut = false;
+   // DY mode: same MET cut in all channels (incl. emu), as in the old DY code,
+   // so N_in^emu is counted with the same selection as ee/mumu.
+   if (isDYEstimation_) { return met.Pt() > 40; }
    if ( TString(Decaymode).Contains( "dimuon" ) || TString(Decaymode).Contains( "dielec" ) )
    {        
       if (met.Pt() > 40) { metcut =true; }

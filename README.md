@@ -355,6 +355,31 @@ submit (all) -> check (--write-bad) -> resubmit bad jobs -> check again -> ... -
 - `EMPTY_INPUT` is a legitimate upstream zero-event condition, not an analysis failure, and is handled consistently by both `check_jobs_v1.py` and `run_hadd_v8.py`.
 - `run_hadd_v8.py` never silently assumes a missing output is a zero-event case - if it can't verify that with `edmFileUtil`, the chunk stays `MISSING` and blocks hadd for that sample.
 
+## DY Estimation Mode
+
+Optional config key (default off; a missing key runs the normal analysis):
+
+```
+DYEstimation : "True"
+```
+
+When on (`Analysis::isDYEstimation_`):
+
+- `ZVetoCut()` is skipped before the jet/MET/b-tag steps, so stages 2-5 keep Z-window (76-106 GeV) events for the R_out/in method.
+- `METCut()` applies MET > 40 GeV in **all** channels, including `muel` (as in the old DY code), so N_in^emu uses the same selection as ee/mumu.
+- Extra histograms, same names as the old DY code:
+  - `h_cf_DiLepMass_<stage>`: same content as `h_DiLepMass_<stage>` (1 GeV bins, Z-window edges on bin edges).
+  - `h_NoMETCut_*_<stage>` / `h_cf_NoMETCut_DiLepMass_<stage>`: stages 2, 3 = all events (before the MET cut); stages 4, 5 = MET-inverted region (MET <= 40).
+- KinReco and CP-observable histograms are still filled, but only for events that also pass `ZVetoCut()` (kept as a cross-check against the normal mode).
+
+Ready-made DY configs live next to the normal ones as `configs/ULSummer20/<era>/*_DY.config` (identical except `DYEstimation : "True"`). For Condor, add `--dy-estimation` to `submit_jobs_v1.py`; it applies the same era routing and picks the `_DY` twin. Use a separate `--study` name for DY jobs:
+
+```bash
+python3 CondorJobs/submit_jobs_v1.py \
+    --study NanoAODv15_DYEst_v1 --run-period UL2018 --channel MuMu \
+    --input-base "$INPUT2018" --samples all --dy-estimation
+```
+
 ## Recent Fixes
 
 - **`SetUpKINObs()` degenerate-solution guard was killing every good KinReco solution** (`src/Analysis.cpp`): the `isKinSol = false;` line sat outside the `if (Top.Energy() < 0.01)` braces, so it ran unconditionally whenever `isKinSol` had just been set `true` - discarding every successful kinematic reconstruction, not just genuinely degenerate (near-zero-energy) ones. This made `h_Lep1pt_8` (AfterTopReconstruction) and the CP-observable histogram `h_Reco_CPO1_ReRange` empty for every sample. Fixed by requiring `isKinSol && Top.Energy() < 0.01` (and the `AnTop` equivalent) before resetting. Verified on a local UL2018 `TTbar_Signal` test: `h_Lep1pt_8` went from 0 to 15985 entries, consistent with the expected KinReco efficiency relative to `h_Lep1pt_5` (AfterBTagMultiplicity, 17689 entries).

@@ -99,6 +99,7 @@ def get_job_config(
     run_period: str,
     channel: str,
     sample: str,
+    dy_estimation: bool = False,
 ):
 
     config_map = {
@@ -150,6 +151,11 @@ def get_job_config(
         else:
             config_file = run_era_map[channel]["base"]
             branch_list = f"{run_period}/branch_list_v15.txt"
+
+    # DY estimation mode: same era routing, but use the *_DY.config twin
+    # (identical except DYEstimation : "True").
+    if dy_estimation:
+        config_file = config_file.replace(".config", "_DY.config")
 
     return config_file, branch_list
 
@@ -1015,6 +1021,7 @@ def run(args):
                 args.run_period,
                 args.channel,
                 sample,
+                dy_estimation=args.dy_estimation,
             )
         )
 
@@ -1224,6 +1231,16 @@ def parse_args():
             "Normal submission mode only: "
             "use the first list file of "
             "each selected sample."
+        ),
+    )
+
+    parser.add_argument(
+        "--dy-estimation",
+        action="store_true",
+        help=(
+            "Use the *_DY.config files "
+            "(DYEstimation mode). Use a separate "
+            "--study name for DY jobs."
         ),
     )
 

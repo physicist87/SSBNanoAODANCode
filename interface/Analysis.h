@@ -78,6 +78,10 @@ private:
 
     bool isData;
     bool isBlind;
+    // DY estimation mode (config key DYEstimation, default False):
+    // no Z-veto before KinReco, MET>40 in all channels (incl. emu),
+    // plus MET-inverted control plots (h_NoMETCut_*) and h_cf_DiLepMass.
+    bool isDYEstimation_ = false;
     // Owned; unique_ptr also blocks copying Analysis (see deleted copy ctor above).
     std::unique_ptr<TextReader> SSBConfReader;
     std::unique_ptr<SSBCorrections> SSBCorr;
@@ -140,6 +144,8 @@ private:
 
     // Shared per-stage control-plot filler; includeJets/includeBJets gate optional fills.
     void FillControlPlots(SelectionStage stage, bool includeJets, bool includeBJets);
+    // DY mode only: same fills into the MET-inverted set (h_NoMETCut_*).
+    void FillInvMETControlPlots(SelectionStage stage, bool includeJets, bool includeBJets);
 
     // Version-agnostic NanoAOD branch reading - see NanoAODBranchReader.h.
     NanoAODBranchReader branchReader_;
@@ -474,6 +480,30 @@ private:
     TH1D *h_Num_PV[10];
     TH1D *h_Num_Jets[10];
     TH1D *h_Num_bJets[10];
+
+    // DY estimation mode only (nullptr otherwise). Histogram names match the
+    // old DY code so downstream R_out/in macros read them unchanged.
+    // h_NoMETCut_*: stages 2,3 = all events (no MET cut yet), stages 4,5 = MET-inverted (MET <= 40).
+    TH1D *h_cf_DiLepMass[10]            = {nullptr};
+    TH1D *h_cf_NoMETCut_DiLepMass[10]   = {nullptr};
+    TH1D *h_NoMETCut_Lep1pt[10]         = {nullptr};
+    TH1D *h_NoMETCut_Lep2pt[10]         = {nullptr};
+    TH1D *h_NoMETCut_Lep1eta[10]        = {nullptr};
+    TH1D *h_NoMETCut_Lep2eta[10]        = {nullptr};
+    TH1D *h_NoMETCut_Lep1phi[10]        = {nullptr};
+    TH1D *h_NoMETCut_Lep2phi[10]        = {nullptr};
+    TH1D *h_NoMETCut_Jet1pt[10]         = {nullptr};
+    TH1D *h_NoMETCut_Jet2pt[10]         = {nullptr};
+    TH1D *h_NoMETCut_Jet1eta[10]        = {nullptr};
+    TH1D *h_NoMETCut_Jet2eta[10]        = {nullptr};
+    TH1D *h_NoMETCut_Jet1phi[10]        = {nullptr};
+    TH1D *h_NoMETCut_Jet2phi[10]        = {nullptr};
+    TH1D *h_NoMETCut_METpt[10]          = {nullptr};
+    TH1D *h_NoMETCut_METphi[10]         = {nullptr};
+    TH1D *h_NoMETCut_DiLepMass[10]      = {nullptr};
+    TH1D *h_NoMETCut_Num_PV[10]         = {nullptr};
+    TH1D *h_NoMETCut_Num_Jets[10]       = {nullptr};
+    TH1D *h_NoMETCut_Num_bJets[10]      = {nullptr};
 
     TH1D *h_Reco_CPO_[13];
     TH1D *h_Reco_CPO_ReRange_[13];
