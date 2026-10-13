@@ -1716,12 +1716,11 @@ std::string SSBCorrections::GetJetVetoType() const {
 }
 
 std::string SSBCorrections::GetProcessSubDir(const std::string& inputfileName) const {
-    // DY madgraph (must check before plain DY)
+    // DY (amc@NLO and madgraph): all eras use the DY efficiency.
+    // Temporary: UL2018 DY_madgraph has no btagEff_UParTAK4.root yet, so it
+    // also falls back to DY like the other eras. Restore a DY_madgraph branch
+    // here once that file exists.
     if (inputfileName.find("DYJetsToLL") != std::string::npos) {
-        if (inputfileName.find("madgraph") != std::string::npos) {
-            if (year_ == "2018") return "DY_madgraph";
-            else                 return "DY";
-        }
         return "DY";
     }
     // WJets -> use DY efficiency
