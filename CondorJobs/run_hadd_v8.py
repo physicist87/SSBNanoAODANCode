@@ -768,6 +768,19 @@ def run(args):
             print("   OK")
 
         # ----------------------------------------------------
+        # Nothing to merge (every chunk is EMPTY_INPUT): no output
+        # directory exists on the SE, so skip instead of crashing.
+        # ----------------------------------------------------
+
+        if found_count == 0:
+
+            if not args.check_only:
+                print("    -> no chunk files to merge, skip hadd")
+                merge_skipped += 1
+
+            continue
+
+        # ----------------------------------------------------
         # Check-only mode
         # ----------------------------------------------------
 
