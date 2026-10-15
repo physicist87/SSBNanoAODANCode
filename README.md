@@ -372,6 +372,8 @@ When on (`Analysis::isDYEstimation_`):
   - `h_NoMETCut_*_<stage>` / `h_cf_NoMETCut_DiLepMass_<stage>`: stages 2, 3 = all events (before the MET cut); stages 4, 5 = MET-inverted region (MET <= 40).
 - KinReco and CP-observable histograms are still filled, but only for events that also pass `ZVetoCut()` (kept as a cross-check against the normal mode).
 
+The full production recipe (submission, job checks, resubmission, hadd, R_out/in macro) is in `DYEstimation/README.md`.
+
 Ready-made DY configs live next to the normal ones as `configs/ULSummer20/<era>/*_DY.config` (identical except `DYEstimation : "True"`). For Condor, add `--dy-estimation` to `submit_jobs_v1.py`; it applies the same era routing and picks the `_DY` twin. Use a separate `--study` name for DY jobs:
 
 ```bash
@@ -382,6 +384,9 @@ python3 CondorJobs/submit_jobs_v1.py \
 
 ## Recent Fixes
 
+- **UL2016 dimuon configs used non-existent correction paths**: `PUWeightPath`, `JMARPath`, `MuonSFPath`, `ElecSFPath` still had the old `2016preVFP_UL` / `2016postVFP_UL` layout, so every UL2016 MuMu job aborted with `std::runtime_error`. Now the same CAT-layout paths as the dielec/muelec configs.
+- **UL2018 DY madgraph b-tag efficiency**: `DY_madgraph` has no `btagEff_UParTAK4.root`, so every jet got eff = 1 and wrong b-tag event weights. All DY samples now use the `DY` efficiency (temporary, see `GetProcessSubDir`).
+- **`run_hadd_v8.py` aborted on all-EMPTY_INPUT samples**: with no chunk files the SE output directory does not exist and opening the hadd log raised `FileNotFoundError`, leaving the remaining samples of that channel unmerged. Such samples are now skipped.
 - **`SetUpKINObs()` degenerate-solution guard was killing every good KinReco solution** (`src/Analysis.cpp`): the `isKinSol = false;` line sat outside the `if (Top.Energy() < 0.01)` braces, so it ran unconditionally whenever `isKinSol` had just been set `true` - discarding every successful kinematic reconstruction, not just genuinely degenerate (near-zero-energy) ones. This made `h_Lep1pt_8` (AfterTopReconstruction) and the CP-observable histogram `h_Reco_CPO1_ReRange` empty for every sample. Fixed by requiring `isKinSol && Top.Energy() < 0.01` (and the `AnTop` equivalent) before resetting. Verified on a local UL2018 `TTbar_Signal` test: `h_Lep1pt_8` went from 0 to 15985 entries, consistent with the expected KinReco efficiency relative to `h_Lep1pt_5` (AfterBTagMultiplicity, 17689 entries).
 - **UL2017 `JetVetoName` reverted `V2 -> V1`**: an earlier change (based on the JME twiki's published "Recommended maps" table) set `Summer19UL17_V2`, but the actual `jetvetomaps.json.gz` in this copy of `jsonpog-integration` only defines `Summer19UL17_V1`. Reverted across all 11 UL2017 configs with a comment explaining the discrepancy.
 
