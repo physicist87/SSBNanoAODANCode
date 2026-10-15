@@ -29,17 +29,20 @@ export CORRECTION_LIBPATH=$HOME/mycorrectionlib/lib
 make -f Makefile_ssb
 ```
 ### Cloning the Repository
-To get started, clone the repository from GitHub and check out the required branch:
+To get started, clone the repository from GitHub and check out the required branch.
+This is the `Run2_ULSummer20_v7_DYEstimation` branch (branched from `Run2_ULSummer20_v7`, adds the DY estimation mode):
 ```sh
-git clone --branch Run2_ULSummer20_v7 https://github.com/physicist87/SSBNanoAODANCode.git
+git clone --branch Run2_ULSummer20_v7_DYEstimation https://github.com/physicist87/SSBNanoAODANCode.git
 cd SSBNanoAODANCode
 ```
 
 If this repository is forked to your account:
 ```sh
-git clone --branch Run2_ULSummer20_v7 https://github.com/<username>/SSBNanoAODANCode.git
+git clone --branch Run2_ULSummer20_v7_DYEstimation https://github.com/<username>/SSBNanoAODANCode.git
 cd SSBNanoAODANCode
 ```
+
+For the normal analysis without the DY estimation changes, use `--branch Run2_ULSummer20_v7` instead.
 
 ### Compilation Instructions
 To compile the analysis program, use the provided `Makefile`:

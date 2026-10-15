@@ -11,6 +11,8 @@ jet/MET/b-tag steps, MET > 40 GeV in all channels (incl. `muel`), and the
 extra histograms `h_cf_DiLepMass_<step>`, `h_NoMETCut_*_<step>` and
 `h_cf_NoMETCut_DiLepMass_<step>`.
 
+Branch: `Run2_ULSummer20_v7_DYEstimation` (branched from `Run2_ULSummer20_v7`).
+
 ## Files
 
 | File | Purpose |
@@ -22,8 +24,10 @@ extra histograms `h_cf_DiLepMass_<step>`, `h_NoMETCut_*_<step>` and
 ## 1. Environment (cluster)
 
 ```bash
-cd <work dir>/SSBNanoAODANCode        # the directory name must be exactly SSBNanoAODANCode
+git clone --branch Run2_ULSummer20_v7_DYEstimation https://github.com/physicist87/SSBNanoAODANCode.git
+cd SSBNanoAODANCode                   # the directory name must be exactly SSBNanoAODANCode
 cmsenv
+make -f Makefile_ssb
 BASE=/u/user/sha/Develop/CPviolation/SSB/AnalysisCode/NanoAODNtuple_v1/NtupleList_v1/NanoAODv15_v2/InputList
 STUDY=NanoAODv15_DYEst_v1
 ```
