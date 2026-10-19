@@ -962,10 +962,6 @@ void Analysis::Loop() {
 
         FillControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
 
-        // DY mode: KinReco/CPO kept as a test, but only for Z-veto passing
-        // events so these histograms stay comparable to the normal mode.
-        if (isDYEstimation_ && ZVetoCut() == false) {traceCutFail("ZVetoCut (DY mode, before KinReco)"); continue;}
-
         SetUpKINObs();
         if (!isKinSol) {
             traceCutFail("KinSolv (no solution)");
@@ -979,6 +975,12 @@ void Analysis::Loop() {
             }
             //FillHisto( h_HT[selectionIndex(SelectionStage::AfterTopReconstruction)]     , AllJetpt   , evt_weight_);
             FillControlPlots(SelectionStage::AfterTopReconstruction, /*includeJets=*/true, /*includeBJets=*/true);
+
+            // DY mode: stage 8 control plots above keep Z-window events (DY SF
+            // at the kin. reco step); top and CP-observable histograms below
+            // are filled only for Z-veto passing events, as in the normal mode.
+            if (isDYEstimation_ && ZVetoCut() == false) {traceCutFail("ZVetoCut (DY mode, after KinReco)"); continue;}
+
             if ( Top.Pt() > AnTop.Pt() ) { Top1 = Top; Top2 = AnTop; }
             else { Top1 = AnTop; Top2 = Top; }
             

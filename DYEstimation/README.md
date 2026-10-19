@@ -234,6 +234,11 @@ Histograms (m_ll, 1 GeV bins, 0-300 GeV):
 At steps 2 and 3 both histograms are identical, so METCut and NoMETCut give
 the same SF there. The detailed table is printed for step 5 only.
 
+`h_cf_DiLepMass_8` (stage 8, Top-Recon., after the b-tag step and the MET > 40
+region) includes Z-window events in DY mode, for a DY SF at the kin. reco
+step. Outputs produced before this change (the first `NanoAODv15_DYEst_v1`
+production) have only Z-veto passing events at stage 8.
+
 ### Method
 
 Z window: 76 <= m_ll < 106 GeV (bins `FindBin(76)` to `FindBin(105.9999)`).

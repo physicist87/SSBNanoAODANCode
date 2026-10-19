@@ -373,7 +373,7 @@ When on (`Analysis::isDYEstimation_`):
 - Extra histograms, same names as the old DY code:
   - `h_cf_DiLepMass_<stage>`: same content as `h_DiLepMass_<stage>` (1 GeV bins, Z-window edges on bin edges).
   - `h_NoMETCut_*_<stage>` / `h_cf_NoMETCut_DiLepMass_<stage>`: stages 2, 3 = all events (before the MET cut); stages 4, 5 = MET-inverted region (MET <= 40).
-- KinReco and CP-observable histograms are still filled, but only for events that also pass `ZVetoCut()` (kept as a cross-check against the normal mode).
+- KinReco runs on all events after the b-tag step, including the Z window, so the stage 8 (Top-Recon.) control plots incl. `h_cf_DiLepMass_8` can be used for a DY SF at the kin. reco step. Top and CP-observable histograms are filled only for events that also pass `ZVetoCut()` (comparable to the normal mode).
 
 The full production recipe (submission, job checks, resubmission, hadd, R_out/in macro) is in `DYEstimation/README.md`.
 
