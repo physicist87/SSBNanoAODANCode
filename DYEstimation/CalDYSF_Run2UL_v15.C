@@ -8,6 +8,7 @@
 #include "TCanvas.h"
 #include "TLegend.h"
 #include "TStyle.h"
+#include "TSystem.h"
 
 using namespace std;
 
@@ -34,7 +35,7 @@ struct StepSF {
 struct PeriodConfig {
     TString period;   // e.g. "UL2018"
     TString base;     // base directory
-    vector<TString> DY_names;
+    TString dyGen;    // DY MC generator: "amcatnlo" (default) or "madgraph"
     vector<TString> Data_MuMu;
     vector<TString> Data_ElEl;
     vector<TString> Data_MuEl;
@@ -187,8 +188,21 @@ void PrintTable(const TString& tag,
     cout << "  " << string(72, '-') << endl;
 }
 
+// True if every path exists; prints each missing one.
+bool AllFilesExist(const vector<TString>& paths) {
+    bool ok = true;
+    for (const auto& p : paths) {
+        if (gSystem->AccessPathName(p)) {
+            cerr << "[ERROR] Missing input: " << p << endl;
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 void DrawPlot(TH1D* h_data, TH1D* h_dy50, TH1D* h_dy10,
-              const TString& xlabel, const TString& outname) {
+              const TString& xlabel, const TString& outname,
+              const TString& dyLabel) {
     gStyle->SetOptStat(0);
     TCanvas* c = new TCanvas(outname, outname, 800, 600);
     c->cd();
@@ -216,9 +230,9 @@ void DrawPlot(TH1D* h_data, TH1D* h_dy50, TH1D* h_dy10,
 
     TLegend* leg = new TLegend(0.65, 0.65, 0.92, 0.90);
     leg->AddEntry(h_data, "Data",                  "lpe");
-    leg->AddEntry(h_dy50, "DY M>50 (amcatnlo)",    "f");
+    leg->AddEntry(h_dy50, Form("DY M>50 (%s)", dyLabel.Data()),    "f");
     if (h_dy10)
-    leg->AddEntry(h_dy10, "DY 10<M<50 (amcatnlo)", "f");
+    leg->AddEntry(h_dy10, Form("DY 10<M<50 (%s)", dyLabel.Data()), "f");
     leg->SetBorderSize(0);
     leg->SetFillStyle(0);
     leg->SetTextSize(0.03);
@@ -243,12 +257,15 @@ void RunPeriod(const PeriodConfig& cfg, FILE* ftxt) {
         return paths;
     };
 
-    vector<TString> DY50_only = { "DYJetsToLL_M_50" };
-    vector<TString> DY10_only = { "DYJetsToLL_M_10To50" };
+    // DY MC sample names for the chosen generator
+    TString dySfx = (cfg.dyGen == "madgraph") ? "_madgraphMLM" : "";
+    vector<TString> DY50_only = { TString("DYJetsToLL_M_50") + dySfx };
+    vector<TString> DY10_only = { TString("DYJetsToLL_M_10To50") + dySfx };
+    vector<TString> DY_names  = { DY10_only[0], DY50_only[0] };
 
-    auto dy_mumu   = makePaths(cfg.DY_names,    "MuMu");
-    auto dy_elel   = makePaths(cfg.DY_names,    "ElEl");
-    auto dy_muel   = makePaths(cfg.DY_names,    "MuEl");
+    auto dy_mumu   = makePaths(DY_names,        "MuMu");
+    auto dy_elel   = makePaths(DY_names,        "ElEl");
+    auto dy_muel   = makePaths(DY_names,        "MuEl");
     auto dat_mumu  = makePaths(cfg.Data_MuMu,   "MuMu");
     auto dat_elel  = makePaths(cfg.Data_ElEl,   "ElEl");
     auto dat_muel  = makePaths(cfg.Data_MuEl,   "MuEl");
@@ -258,6 +275,19 @@ void RunPeriod(const PeriodConfig& cfg, FILE* ftxt) {
     auto dy10_elel = makePaths(DY10_only,       "ElEl");
     auto dy50_muel = makePaths(DY50_only,       "MuEl");
     auto dy10_muel = makePaths(DY10_only,       "MuEl");
+
+    // Skip the period if any input is missing, instead of silently summing
+    // a partial set (e.g. UL2016PreVFP has no DYJetsToLL_M_50_madgraphMLM).
+    bool inputs_ok = true;
+    for (const auto* v : { &dy_mumu, &dy_elel, &dy_muel, &dat_mumu, &dat_elel, &dat_muel })
+        inputs_ok = AllFilesExist(*v) && inputs_ok;
+    if (!inputs_ok) {
+        cerr << "[ERROR] " << cfg.period << " (" << cfg.dyGen << "): missing input, period skipped" << endl;
+        fprintf(ftxt, "# %s skipped: missing input for DY generator %s\n#\n",
+                cfg.period.Data(), cfg.dyGen.Data());
+        return;
+    }
+    TString outPrefix = (cfg.dyGen == "madgraph") ? "NanoAODv15_madgraph_" : "NanoAODv15_";
 
     // Steps: 2=Dilepton, 3=>=2jets, 5=>=1btag
     vector<int>     steps      = { 2,          3,           5 };
@@ -517,16 +547,23 @@ void RunPeriod(const PeriodConfig& cfg, FILE* ftxt) {
     // Draw plots
     cout << "\n[INFO] Drawing plots for " << cfg.period << "..." << endl;
     DrawPlot(plot_dat_mumu, plot_dy50_mumu, plot_dy10_mumu,
-             "M_{#mu^{+}#mu^{-}} (GeV)", "NanoAODv15_" + cfg.period + "_mumu_nomet");
+             "M_{#mu^{+}#mu^{-}} (GeV)", outPrefix + cfg.period + "_mumu_nomet", cfg.dyGen);
     DrawPlot(plot_dat_elel, plot_dy50_elel, plot_dy10_elel,
-             "M_{e^{+}e^{-}} (GeV)", "NanoAODv15_" + cfg.period + "_elel_nomet");
+             "M_{e^{+}e^{-}} (GeV)", outPrefix + cfg.period + "_elel_nomet", cfg.dyGen);
     DrawPlot(plot_dat_muel, plot_dy50_muel, plot_dy10_muel,
-             "M_{e#mu} (GeV)", "NanoAODv15_" + cfg.period + "_muel_nomet");
+             "M_{e#mu} (GeV)", outPrefix + cfg.period + "_muel_nomet", cfg.dyGen);
 }
 
-void CalDYSF_Run2UL_v15() {
+// dyGen  : DY MC used for R_out/in, k_ll and N_out(MC): "amcatnlo" or "madgraph"
+// basedir: merged-file directory <basedir>/<era>/<channel>/<sample>/<sample>.root
+void CalDYSF_Run2UL_v15(TString dyGen = "amcatnlo",
+                        TString basedir = "/Users/seungkyuha/SK_Analysis_v2/CPV/Run2Full_v1/AnalysisCodes/BGEstimation_v1/NanoAODv15_DYEst_v1") {
 
-    TString basedir = "/Users/seungkyuha/SK_Analysis_v2/CPV/Run2Full_v1/AnalysisCodes/BGEstimation_v1/NanoAODv15_DYEst_v1";
+    if (dyGen != "amcatnlo" && dyGen != "madgraph") {
+        cerr << "[ERROR] dyGen must be \"amcatnlo\" or \"madgraph\", got: " << dyGen << endl;
+        return;
+    }
+    cout << "[INFO] DY MC generator: " << dyGen << endl;
 
     // -------------------------------------------------------
     // UL2017 configuration
@@ -534,7 +571,7 @@ void CalDYSF_Run2UL_v15() {
     PeriodConfig cfg2017;
     cfg2017.period = "UL2017";
     cfg2017.base   = basedir + "/UL2017";
-    cfg2017.DY_names = { "DYJetsToLL_M_10To50", "DYJetsToLL_M_50" };
+    cfg2017.dyGen  = dyGen;
     cfg2017.Data_MuMu = {
         "Data_DoubleMuon_Run2017B", "Data_DoubleMuon_Run2017C",
         "Data_DoubleMuon_Run2017D", "Data_DoubleMuon_Run2017E",
@@ -569,7 +606,7 @@ void CalDYSF_Run2UL_v15() {
     PeriodConfig cfg2018;
     cfg2018.period = "UL2018";
     cfg2018.base   = basedir + "/UL2018";
-    cfg2018.DY_names = { "DYJetsToLL_M_10To50", "DYJetsToLL_M_50" };
+    cfg2018.dyGen  = dyGen;
     cfg2018.Data_MuMu = {
         "Data_DoubleMuon_Run2018A", "Data_DoubleMuon_Run2018B",
         "Data_DoubleMuon_Run2018C", "Data_DoubleMuon_Run2018D",
@@ -590,13 +627,15 @@ void CalDYSF_Run2UL_v15() {
     };
 
     // Open output txt file
-    TString outTxt = "DYSF_Run2UL_NanoAODv15.txt";
+    TString outTxt = (dyGen == "madgraph") ? "DYSF_Run2UL_NanoAODv15_madgraph.txt"
+                                           : "DYSF_Run2UL_NanoAODv15.txt";
     FILE* ftxt = fopen(outTxt.Data(), "w");
     if (!ftxt) {
         cerr << "[ERROR] Cannot open " << outTxt << " for writing" << endl;
         return;
     }
     fprintf(ftxt, "# DY Scale Factors Run2 UL (>= 1 b-tag)\n");
+    fprintf(ftxt, "# DY MC generator: %s\n", dyGen.Data());
     fprintf(ftxt, "# Note: MuMu/ElEl SF from METCut, MuEl SF from NoMETCut\n");
     fprintf(ftxt, "# Columns: key  SF  SF_err  N_MC  N_MC_err  N_DY  N_DY_err\n");
     fprintf(ftxt, "#\n");
@@ -607,7 +646,7 @@ void CalDYSF_Run2UL_v15() {
     PeriodConfig cfg2016Pre;
     cfg2016Pre.period = "UL2016PreVFP";
     cfg2016Pre.base   = basedir + "/UL2016PreVFP";
-    cfg2016Pre.DY_names = { "DYJetsToLL_M_10To50", "DYJetsToLL_M_50" };
+    cfg2016Pre.dyGen  = dyGen;
     // NanoAODv15: PreVFP eras are named *-HIPM; Run2016B-HIPM (ver1) has no
     // golden-JSON lumis (all jobs EMPTY_INPUT, no merged file), so only
     // Run2016B-HIPM-v2 is used for era B.
@@ -645,7 +684,7 @@ void CalDYSF_Run2UL_v15() {
     PeriodConfig cfg2016Post;
     cfg2016Post.period = "UL2016PostVFP";
     cfg2016Post.base   = basedir + "/UL2016PostVFP";
-    cfg2016Post.DY_names = { "DYJetsToLL_M_10To50", "DYJetsToLL_M_50" };
+    cfg2016Post.dyGen  = dyGen;
     cfg2016Post.Data_MuMu = {
         "Data_DoubleMuon_Run2016F",      "Data_DoubleMuon_Run2016G",
         "Data_DoubleMuon_Run2016H",

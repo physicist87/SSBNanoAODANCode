@@ -19,7 +19,7 @@ Branch: `Run2_ULSummer20_v7_DYEstimation` (branched from `Run2_ULSummer20_v7`).
 | --- | --- |
 | `configs/ULSummer20/<era>/*_DY.config` | Copies of the normal configs with `DYEstimation : "True"` |
 | `CondorJobs/submit_jobs_v1.py --dy-estimation` | Same era routing, picks the `*_DY.config` twin |
-| `DYEstimation/CalDYSF_Run2UL_v15.C` | R_out/in, k_ll and DY SF for all Run 2 UL eras |
+| `DYEstimation/CalDYSF_Run2UL_v15.C` | R_out/in, k_ll and DY SF for all Run 2 UL eras (amc@NLO or madgraph DY) |
 
 ## 1. Environment (cluster)
 
@@ -165,24 +165,138 @@ unzip -q NanoAODv15_DYEst_v1_merged.zip
 
 The zip keeps the layout `<study>/<era>/<channel>/<sample>/<sample>.root`.
 
-## 7. R_out/in calculation
+## 7. R_out/in calculation (`CalDYSF_Run2UL_v15.C`)
 
-Set `basedir` in `CalDYSF_Run2UL_v15()` to the unzipped `<study>` directory,
-then run it from a separate output directory:
+### Running
 
 ```bash
+mkdir -p <output dir> && cd <output dir>
+cp <repo>/DYEstimation/CalDYSF_Run2UL_v15.C .
+
+# default: amc@NLO DY, basedir as written in the macro
 root -l -b -q CalDYSF_Run2UL_v15.C 2>&1 | tee log_v15.txt
+
+# madgraph DY
+root -l -b -q 'CalDYSF_Run2UL_v15.C("madgraph")' 2>&1 | tee log_v15_madgraph.txt
+
+# other location of the merged files
+root -l -b -q 'CalDYSF_Run2UL_v15.C("amcatnlo", "/path/to/NanoAODv15_DYEst_v1")'
 ```
 
-- Inputs: Data and amc@NLO DY (`DYJetsToLL_M_10To50`, `DYJetsToLL_M_50`);
-  the madgraph DY files are produced but not used.
-- Steps: 2 (dilepton), 3 (>= 2 jets), 5 (>= 1 b-tag).
-- `h_cf_DiLepMass_<step>`: all events at step 2/3, MET > 40 at step 4/5 (METCut).
-  `h_cf_NoMETCut_DiLepMass_<step>`: all events at step 2/3, MET <= 40 at step 4/5.
-- SF used: METCut for ee and mumu, NoMETCut for emu.
-- Outputs: `DYSF_Run2UL_NanoAODv15.txt` and `NanoAODv15_<era>_<channel>_nomet.pdf`.
-  The keys in the txt contain spaces (e.g. `UL2018_>= 1 b-tag_MuMu`), same format
-  as the earlier `DYSF_Run2UL.txt`.
+Arguments:
+
+| Argument | Values | Default |
+| --- | --- | --- |
+| `dyGen` | `"amcatnlo"`, `"madgraph"` | `"amcatnlo"` |
+| `basedir` | directory holding `<era>/<channel>/<sample>/<sample>.root` | the local unzipped study |
+
+Before computing a period the macro checks that every Data and DY input file
+exists. If one is missing it prints `[ERROR] Missing input: ...`, skips that
+period and writes `# <period> skipped: ...` to the txt file, instead of
+summing a partial set.
+
+### DY MC generator option
+
+| `dyGen` | DY samples | Outputs |
+| --- | --- | --- |
+| `amcatnlo` | `DYJetsToLL_M_10To50`, `DYJetsToLL_M_50` | `DYSF_Run2UL_NanoAODv15.txt`, `NanoAODv15_<era>_<ch>_nomet.pdf` |
+| `madgraph` | `DYJetsToLL_M_10To50_madgraphMLM`, `DYJetsToLL_M_50_madgraphMLM` | `DYSF_Run2UL_NanoAODv15_madgraph.txt`, `NanoAODv15_madgraph_<era>_<ch>_nomet.pdf` |
+
+- Both sets are produced by the Condor step (section 2 submits every
+  `DYJetsToLL_*`), so switching needs no new jobs.
+- UL2016PreVFP has no `DYJetsToLL_M_50_madgraphMLM` InputList, so with
+  `madgraph` that period is skipped; the other periods run.
+- The two generators give different R_out/in (shape outside the Z window)
+  and N_out(MC); the difference can be used as a cross-check or a
+  systematic on the DY normalization.
+- Data inputs are identical for both options.
+
+### Inputs and regions
+
+Data: all `Data_*` samples of the channel (per era list in the macro;
+UL2016PreVFP uses `Run2016B-HIPM-v2` and `C/D/E/F-HIPM`).
+
+Steps (selection stage index in `Analysis`):
+
+| Step | Selection |
+| --- | --- |
+| 2 | dilepton (no Z-veto in DY mode) |
+| 3 | + >= 2 jets |
+| 5 | + MET region of step 4 (METCut or NoMETCut) + >= 1 b-tag |
+
+Histograms (m_ll, 1 GeV bins, 0-300 GeV):
+
+| Histogram | Step 2, 3 | Step 4, 5 |
+| --- | --- | --- |
+| `h_cf_DiLepMass_<step>` (METCut) | all events | MET > 40 GeV (all channels incl. emu) |
+| `h_cf_NoMETCut_DiLepMass_<step>` (NoMETCut) | all events | MET <= 40 GeV |
+
+At steps 2 and 3 both histograms are identical, so METCut and NoMETCut give
+the same SF there. The detailed table is printed for step 5 only.
+
+### Method
+
+Z window: 76 <= m_ll < 106 GeV (bins `FindBin(76)` to `FindBin(105.9999)`).
+For a histogram h:
+
+```
+N_in  = sum of h over the Z window
+N_out = Integral(h) - N_in
+```
+
+Uncertainties are the quadrature sum of the bin errors in the same range.
+
+For each step and each region (NoMETCut, METCut), with ll = ee or mumu:
+
+```
+k_ee  = sqrt( N_in^MC(ee)   / N_in^MC(mumu) )      # DY MC, NoMETCut, same step
+k_mm  = sqrt( N_in^MC(mumu) / N_in^MC(ee)   )      # = 1 / k_ee
+
+R_ll  = N_out^MC(ll) / N_in^MC(ll)                 # DY MC, same region
+
+N_out^est(ll) = R_ll * ( N_in^Data(ll) - 0.5 * k_ll * N_in^Data(emu) )
+
+SF_ll  = N_out^est(ll) / N_out^MC(ll)
+SF_emu = sqrt( SF_ee * SF_mm )
+```
+
+- k_ll corrects the emu count for the ee/mumu efficiency difference; it is
+  always taken from the NoMETCut DY MC of the same step.
+- `0.5 * k_ll * N_in^Data(emu)` subtracts the non-DY (flavour-symmetric,
+  mainly ttbar) contribution inside the Z window of the same-flavour channel.
+- N_in^Data(emu) is the emu data in the same region, so it carries the
+  MET > 40 cut in the METCut region.
+
+Final DY yields:
+
+```
+N_DY(ll)  = N_out^MC(ll) * SF_ll        # SF_ll from METCut
+N_DY(emu) = N^MC(emu)    * SF_emu       # SF_emu from NoMETCut, N^MC(emu) = full m_ll range
+```
+
+Error propagation (inputs treated as independent):
+
+```
+sigma(x1/x2)^2       = (y/x1)^2 sigma1^2 + (y/x2)^2 sigma2^2,          y = x1/x2
+sigma(k)^2           = sigma1^2 / (4 x1 x2) + x1 sigma2^2 / (4 x2^3),  k = sqrt(x1/x2)
+sigma(N_out^est)^2   = (N_in^ll - 0.5 k N_in^emu)^2 sigma(R)^2 + R^2 sigma(N_in^ll)^2
+                     + (0.5 R k)^2 sigma(N_in^emu)^2 + (0.5 R N_in^emu)^2 sigma(k)^2
+sigma(SF_emu)^2      = (SF_mm / SF_ee) sigma(SF_ee)^2 / 4 + (SF_ee / SF_mm) sigma(SF_mm)^2 / 4
+sigma(N * SF)^2      = SF^2 sigma(N)^2 + N^2 sigma(SF)^2
+```
+
+### Outputs
+
+- Console: per period the SF table for steps 2, 3, 5 and the detailed
+  step 5 table (N_in, N_out, R_out/in, k_ll, N_in(Data), N_out(est), SF)
+  for NoMETCut and METCut.
+- txt: one line per period, step and channel:
+  `key  SF  SF_err  N_MC  N_MC_err  N_DY  N_DY_err`.
+  The key contains spaces (e.g. `UL2018_>= 1 b-tag_MuMu`), same format as
+  the earlier `DYSF_Run2UL.txt`, so split from the right (last six fields
+  are numbers).
+- pdf: m_ll at step 5 NoMETCut, Data vs DY (M > 50 and 10-50) per period
+  and channel.
 
 ## Known limitations
 
