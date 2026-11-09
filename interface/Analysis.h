@@ -20,6 +20,7 @@
 #include "./../KinSolv/analysisUtils.h"                                                                                       
 #include "./../KinSolv/KinematicReconstruction.h"                                                                             
 #include "./../KinSolv/KinematicReconstructionSolution.h"
+#include "./KinRecoInputMaker.h"
 
 // Common tools 
 #include "./../CommonTools.hpp"
@@ -222,6 +223,14 @@ private:
 
     void SetUpKINObs();
     bool isKinSol;
+    // Built once per job in SetVariables() (was re-created - and the input
+    // ROOT file re-opened - for every event). Input file from config key
+    // KinRecoInputFile (default ./KinSolv/Kin_input.root).
+    std::unique_ptr<KinematicReconstruction> kinReco_;
+    // KinReco input histogram production (config MakeKinRecoInput : "True",
+    // TTbar_Signal MC only). Null when disabled.
+    std::unique_ptr<KinRecoInputMaker> kinRecoInputMaker_;
+    KinRecoInputMaker::GenTtbar genTtbar_;
     VLV v_leptons_VLV; 
     VLV v_jets_VLV; 
     VLV v_bjets_VLV; 

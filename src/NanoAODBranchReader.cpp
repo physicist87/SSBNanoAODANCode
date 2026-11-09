@@ -122,6 +122,8 @@ void NanoAODBranchReader::InitBranches(const std::string &branchListFile, bool i
                 ucharVectors[branchName] = std::make_unique<TTreeReaderArray<UChar_t>>(reader_, branchName.c_str());
             } else if (actualType == "Short_t" && isVector) {
                 shortVectors[branchName] = std::make_unique<TTreeReaderArray<Short_t>>(reader_, branchName.c_str());
+            } else if (actualType == "UShort_t" && isVector) {
+                ushortVectors[branchName] = std::make_unique<TTreeReaderArray<UShort_t>>(reader_, branchName.c_str());
             } else {
                 std::cerr << "Warning: Unsupported/unhandled leaf type for branch '" << branchName
                           << "': type=" << actualType << ", vector=" << isVector
@@ -159,6 +161,10 @@ Long64_t NanoAODBranchReader::GetIntArrayValue(const std::string &branchName, in
     auto itS = shortVectors.find(branchName);
     if (itS != shortVectors.end() && itS->second && idx < itS->second->GetSize()) {
         return static_cast<Long64_t>(itS->second->At(idx));
+    }
+    auto itUS = ushortVectors.find(branchName);
+    if (itUS != ushortVectors.end() && itUS->second && idx < itUS->second->GetSize()) {
+        return static_cast<Long64_t>(itUS->second->At(idx));
     }
     auto itU = ucharVectors.find(branchName);
     if (itU != ucharVectors.end() && itU->second && idx < itU->second->GetSize()) {
@@ -200,7 +206,7 @@ TTreeReaderValue<Float_t>* NanoAODBranchReader::GetFloatSinglePtrByAlias(const s
 }
 
 bool NanoAODBranchReader::BranchIsAvailable(const std::string &branchName) const {
-    return intVectors.count(branchName)   || shortVectors.count(branchName) ||
+    return intVectors.count(branchName)   || shortVectors.count(branchName) || ushortVectors.count(branchName) ||
            ucharVectors.count(branchName) || uintVectors.count(branchName)  ||
            floatVectors.count(branchName) || boolVectors.count(branchName)  ||
            intSingles.count(branchName)   || ucharSingles.count(branchName) ||

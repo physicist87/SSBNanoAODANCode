@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <map>
+#include <string>
 
 #include <TLorentzVector.h>
 
@@ -42,8 +43,13 @@ class KinematicReconstruction{
     
 public:
     
-    KinematicReconstruction(const int minNumberOfBtags, const bool preferBtags, const bool massLoop =false);
-    ~KinematicReconstruction(){}
+    /// inputFile: ROOT file with the smearing/mbl/W-mass input histograms
+    /// (KinReco_*_step0/step7, see interface/KinRecoInputMaker.h).
+    KinematicReconstruction(const int minNumberOfBtags, const bool preferBtags, const bool massLoop =false,
+                            const std::string& inputFile ="./KinSolv/Kin_input.root");
+    ~KinematicReconstruction();
+    KinematicReconstruction(const KinematicReconstruction&) = delete;
+    KinematicReconstruction& operator=(const KinematicReconstruction&) = delete;
     
     int getNSol()const;
     Struct_KinematicReconstruction getSol()const;
@@ -102,6 +108,9 @@ private:
     void angle_rot(const double& alpha, const double& e, const TLorentzVector& inJet, TLorentzVector& jet_sm)const;
     
     TRandom3* r3_;
+
+    /// Input histogram file used by loadData()
+    std::string inputFile_;
     
     int nSol_;
     Struct_KinematicReconstruction sol_;

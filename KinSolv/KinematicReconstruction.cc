@@ -105,10 +105,13 @@ void KinematicReconstruction::angle_rot(const double& alpha, const double& e, co
 
 
 
-KinematicReconstruction::KinematicReconstruction(const int minNumberOfBtags, const bool preferBtags, const bool massLoop):
+KinematicReconstruction::KinematicReconstruction(const int minNumberOfBtags, const bool preferBtags, const bool massLoop,
+                                                 const std::string& inputFile):
 minNumberOfBtags_(minNumberOfBtags),
 preferBtags_(preferBtags),
 massLoop_(massLoop),
+r3_(nullptr),
+inputFile_(inputFile),
 nSol_(0),
 h_wmass_(0),
 h_jetAngleRes_(0),
@@ -526,45 +529,47 @@ std::vector< Struct_KinematicReconstruction > KinematicReconstruction::getSols()
 
 void KinematicReconstruction::loadData()
 {
-    //std::cout<<"Smearing requires input distributions from files\n";
-    
     r3_ = new TRandom3();
-    
-// jet,lepton resolutions; mbl mass; W mass;
-    //TString data_path1 = common::DATA_PATH_COMMON();
-    //TString data_path1 = common::CMSSW_BASE();
-    //TString data_path1 = "./Origin/KinSolv/";
-    //data_path1.Append("/KinReco_input.root");
-    TString data_path1 = "";
-    //data_path1.Append("./KinSolv/KinReco_input_2016_Run2BtoH_25ns_80X_v037_dilep_sel_25Sep2017_NLODY_FineEleID.root");
-    data_path1.Append("./KinSolv/Kin_input.root");
-    //data_path1 = "./KinSolv/KinReco_input_2016_Run2BtoH_25ns_80X_v037_dilep_sel_25Sep2017_NLODY_FineEleID.root";
-    
-    TFile dataFile(data_path1);
-    //std::cout << "dtatFile : " << dataFile.GetName() << std::endl;
-    //jet angle resolution
-        h_jetAngleRes_ = (TH1F*)dataFile.Get("KinReco_d_angle_jet_step7");
-        h_jetAngleRes_->SetDirectory(0);
-    //jet energy resolution
-        h_jetEres_ = (TH1F*)dataFile.Get("KinReco_fE_jet_step7");
-        h_jetEres_->SetDirectory(0);
-    //lep angle resolution
-        h_lepAngleRes_ = (TH1F*)dataFile.Get("KinReco_d_angle_lep_step7");
-        h_lepAngleRes_->SetDirectory(0);
-    //lep energy resolution
-        h_lepEres_ = (TH1F*)dataFile.Get("KinReco_fE_lep_step7");
-        h_lepEres_->SetDirectory(0);
-    //mbl mass
-        h_mbl_w_ = (TH1F*)dataFile.Get("KinReco_mbl_true_step0");
-        h_mbl_w_->SetDirectory(0);
-        //h_mbl_w_ = (TH1F*)dataFile.Get("KinReco_mbl_true_wrong_step0");
-        //h_mbl_w_->SetDirectory(0);
-    // W mass
-        h_wmass_ = (TH1F*)dataFile.Get("KinReco_W_mass_step0");
-        h_wmass_->SetDirectory(0);
+
+    // jet,lepton resolutions; mbl mass; W mass
+    // (previously hardcoded to ./KinSolv/Kin_input.root; now passed in the
+    //  constructor so each era can use its own file)
+    TFile dataFile(inputFile_.c_str(), "READ");
+    if(dataFile.IsZombie()){
+        std::cerr<<"ERROR in KinematicReconstruction::loadData()! Cannot open input file: "<<inputFile_<<"\n...break\n"<<std::endl;
+        exit(97);
+    }
+    auto get = [&dataFile, this](const char* name)->TH1*{
+        TH1* h = dynamic_cast<TH1*>(dataFile.Get(name));
+        if(!h){
+            std::cerr<<"ERROR in KinematicReconstruction::loadData()! Histogram "<<name
+                     <<" not found in "<<inputFile_<<"\n...break\n"<<std::endl;
+            exit(98);
+        }
+        h->SetDirectory(0);
+        return h;
+    };
+    h_jetAngleRes_ = get("KinReco_d_angle_jet_step7");
+    h_jetEres_     = get("KinReco_fE_jet_step7");
+    h_lepAngleRes_ = get("KinReco_d_angle_lep_step7");
+    h_lepEres_     = get("KinReco_fE_lep_step7");
+    h_mbl_w_       = get("KinReco_mbl_true_step0");
+    h_wmass_       = get("KinReco_W_mass_step0");
     dataFile.Close();
-// ...
-    //std::cout<<"Found all histograms needed for smearing\n";
+    std::cout<<"[KinematicReconstruction] loaded input histograms from "<<inputFile_<<std::endl;
+}
+
+
+
+KinematicReconstruction::~KinematicReconstruction()
+{
+    delete h_wmass_;
+    delete h_jetAngleRes_;
+    delete h_jetEres_;
+    delete h_lepAngleRes_;
+    delete h_lepEres_;
+    delete h_mbl_w_;
+    delete r3_;
 }
 
 

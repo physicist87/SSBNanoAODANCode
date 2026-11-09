@@ -174,6 +174,29 @@ void Analysis::SetVariables() {
     isBlind = (blindStr == "True");
     logger_.Info() << "[Blind] isData=" << isData << " isBlind=" << isBlind << std::endl;
 
+    // ---- Kinematic reconstruction (built once per job) ----
+    {
+        std::string kinRecoInput = "./KinSolv/Kin_input.root";
+        if (SSBConfReader->Check("KinRecoInputFile")) kinRecoInput = SSBConfReader->GetText("KinRecoInputFile");
+        logger_.Info() << "[KinReco] input histogram file: " << kinRecoInput << std::endl;
+        kinReco_ = std::make_unique<KinematicReconstruction>(1, true, false, kinRecoInput);
+
+        TString makeInput = ReadValidatedBoolConfig(SSBConfReader.get(), "MakeKinRecoInput", "False", logger_, /*required=*/false);
+        if (makeInput == "True") {
+            if (isData || !TString(FileName_).Contains("TTbar_Signal")) {
+                logger_.Warning() << "[KinReco] MakeKinRecoInput=True ignored: only TTbar_Signal MC is used ("
+                                  << FileName_ << ")" << std::endl;
+            } else {
+                branchReader_.ValidateRequiredBranches({
+                    "GenPart_pt", "GenPart_eta", "GenPart_phi", "GenPart_mass", "GenPart_pdgId",
+                    "GenPart_status", "GenPart_statusFlags", "GenPart_genPartIdxMother"});
+                fout->cd();
+                kinRecoInputMaker_ = std::make_unique<KinRecoInputMaker>();
+                logger_.Info() << "[KinReco] producing KinReco input histograms (KinReco_*_step0/step7)" << std::endl;
+            }
+        }
+    }
+
     // Debug event tracer - optional, off by default; Check()-guarded since
     // DebugMode/DebugRun/DebugLumi/DebugEvent aren't in any existing config.
     {
@@ -826,6 +849,15 @@ void Analysis::Loop() {
         PUWeightApply();
         L1PreFireApply();
 
+        // KinReco input production: gen-level (step0) templates, before any
+        // reco selection. Unit weight x sign(Generator_weight).
+        double kinRecoInputWeight = 1.;
+        if (kinRecoInputMaker_) {
+            kinRecoInputWeight = (branchReader_.RequiredFloatValue("Generator_weight") < 0.) ? -1. : 1.;
+            genTtbar_ = KinRecoInputMaker::FindGenTtbar(branchReader_);
+            kinRecoInputMaker_->FillGen(genTtbar_, kinRecoInputWeight);
+        }
+
         SetObjectVariable(); //
         LeptonSelector(); 
 
@@ -901,6 +933,9 @@ void Analysis::Loop() {
         if (NumbJetCut(v_bjet_idx) == false) {traceCutFail("NumbJetCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
+        // KinReco input production: reco-gen resolution (step7) templates,
+        // from the same leptons/jets that are handed to the solver below.
+        if (kinRecoInputMaker_) kinRecoInputMaker_->FillReco(genTtbar_, Lep, AnLep, jets, kinRecoInputWeight);
         SetUpKINObs();
         if (!isKinSol) {
             traceCutFail("KinSolv (no solution)");
@@ -995,6 +1030,7 @@ void Analysis::Loop() {
 
     }// end of event iteration //
     logger_.Info() << "End Loop !!" << std::endl;
+    if (kinRecoInputMaker_) kinRecoInputMaker_->PrintSummary();
     fallbackCounter_.PrintSummary();
 }
 
@@ -2635,7 +2671,6 @@ void Analysis::SetUpKINObs()
    v_leptons_VLV.push_back(common::TLVtoLV(AnLep));
    v_anlepidx_KIN.push_back(1);
 
-   auto kinematicReconstruction = std::make_unique<KinematicReconstruction>(1, true);
 
    const LV met_LV = common::TLVtoLV(Met);
    
@@ -2663,7 +2698,7 @@ void Analysis::SetUpKINObs()
    // Only proceed if we have valid b-jet indices
    if (!v_bjetidx_KIN.empty() && v_jets_VLV.size() > 0) {
       KinematicReconstructionSolutions kinematicReconstructionSolutions = 
-         kinematicReconstruction->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN, 
+         kinReco_->solutions(v_lepidx_KIN, v_anlepidx_KIN, v_jetidx_KIN, 
                                          v_bjetidx_KIN, v_leptons_VLV, v_jets_VLV, 
                                          jets_btag_vec, met_LV);
                                          

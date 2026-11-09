@@ -123,6 +123,8 @@ public:
     // NanoAODv15 narrows several index branches (Jet_genJetIdx, Muon_jetIdx,
     // Muon_genPartIdx, Muon_fsrPhotonIdx, ...) from Int_t to Short_t.
     std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<Short_t>>> shortVectors;
+    // GenPart_statusFlags is UShort_t (NanoAOD >= v12).
+    std::unordered_map<std::string, std::unique_ptr<TTreeReaderArray<UShort_t>>> ushortVectors;
 
 private:
     TChain *chain_;
