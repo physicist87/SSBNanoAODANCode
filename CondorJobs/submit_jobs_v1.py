@@ -471,8 +471,19 @@ def submit_condor(
     jdl_path: Path,
 ):
 
+    # Readable condor_q name instead of "ID: <cluster>":
+    # condorSubmit/<study>/<period>/<channel>/<sample>.sub
+    #   -> <study>_<channel>_<sample>
+    batch_name = "_".join([
+        jdl_path.parents[2].name,
+        jdl_path.parent.name,
+        jdl_path.stem,
+    ])
+
     cmd = [
         "condor_submit",
+        "-batch-name",
+        batch_name,
         str(jdl_path),
     ]
 
