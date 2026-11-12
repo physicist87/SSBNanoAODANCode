@@ -148,6 +148,23 @@ def collect_input_lists(sample_dir: Path, sample: str):
 # Safe text reader
 # ============================================================
 
+def read_tail(path: Path, max_bytes: int):
+    """Last max_bytes of a (possibly huge) log file, as text."""
+
+    if not path.is_file():
+        return ""
+
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes))
+            return f.read().decode(errors="replace")
+
+    except Exception:
+        return ""
+
+
 def read_text(path: Path):
 
     if not path.is_file():
@@ -259,7 +276,9 @@ def check_stdout(out_file: Path):
             "stageout_done": False,
         }
 
-    content = read_text(out_file)
+    # The markers are printed at the very end of the job; reading
+    # only the tail keeps this fast for multi-MB logs.
+    content = read_tail(out_file, 2 * 1024 * 1024)
 
     return {
         "exists": True,
@@ -281,6 +300,14 @@ def check_stdout(out_file: Path):
 # Warnings are NOT treated as failures.
 # ============================================================
 
+SERIOUS_STDERR_RE = re.compile(
+    r"segmentation violation|segmentation fault|"
+    r"Traceback \(most recent call last\)|\[ERROR\]|fatal error|"
+    r"std::exception|terminate called|Aborted|core dumped",
+    re.IGNORECASE,
+)
+
+
 def check_stderr(err_file: Path):
 
     if not err_file.is_file():
@@ -291,33 +318,15 @@ def check_stderr(err_file: Path):
             "serious_lines": [],
         }
 
-    content = read_text(err_file)
+    # Fatal errors end the job, so they sit at the end of stderr;
+    # scan only the tail, with one precompiled pattern.
+    content = read_tail(err_file, 512 * 1024)
 
-    serious_patterns = [
-        r"segmentation violation",
-        r"segmentation fault",
-        r"Traceback \(most recent call last\)",
-        r"\[ERROR\]",
-        r"fatal error",
-        r"std::exception",
-        r"terminate called",
-        r"Aborted",
-        r"core dumped",
+    serious_lines = [
+        line
+        for line in content.splitlines()
+        if SERIOUS_STDERR_RE.search(line)
     ]
-
-    serious_lines = []
-
-    for line in content.splitlines():
-
-        for pattern in serious_patterns:
-
-            if re.search(
-                pattern,
-                line,
-                re.IGNORECASE,
-            ):
-                serious_lines.append(line)
-                break
 
     return {
         "exists": True,
