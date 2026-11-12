@@ -661,7 +661,10 @@ def check_sample(
         # instead of a genuine failure.
         # ----------------------------------------------------
 
-        if status != "OK":
+        # Only data can legitimately have zero events (Golden JSON);
+        # for MC this edmFileUtil scan is slow (up to 120 s per input
+        # file) and never changes the verdict, so skip it.
+        if status != "OK" and is_data_sample(sample):
 
             if input_list_has_zero_events(
                 job["list_path"]
