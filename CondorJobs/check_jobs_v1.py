@@ -827,7 +827,9 @@ def run(args):
         sys.exit(1)
 
     input_base = (
-        INPUT_LIST_BASE[
+        Path(args.input_base)
+        if args.input_base
+        else INPUT_LIST_BASE[
             args.run_period
         ]
     )
@@ -1149,6 +1151,17 @@ def parse_args():
         help=(
             "all, data, mc, or explicit sample names. "
             "Default: all"
+        ),
+    )
+
+    parser.add_argument(
+        "--input-base",
+        default=None,
+        help=(
+            "InputList base directory (default: the "
+            "official InputList of the run period). "
+            "Use for private samples, e.g. "
+            ".../dtGSamples/InputList/2018"
         ),
     )
 
