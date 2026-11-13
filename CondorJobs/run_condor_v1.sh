@@ -412,7 +412,27 @@ echo "============================================================"
 echo
 echo "[INFO] Creating SE destination directory..."
 
-xrdfs "${SE_HOST}" mkdir -p "${SE_DEST_DIR}"
+# Retry: when thousands of jobs finish together the SE door can time out
+# ("Socket timeout (destination)", xrdcp exit 54). Retry with a random
+# back-off instead of losing the finished job.
+retry() {
+    local n=1 max=6 delay
+    until "$@"; do
+        if (( n >= max )); then
+            echo "[ERROR] giving up after ${max} attempts: $*" >&2
+            return 1
+        fi
+        delay=$(( 30 * n + RANDOM % 60 ))
+        echo "[WARN] attempt ${n}/${max} failed: $* ; retry in ${delay}s" >&2
+        sleep "${delay}"
+        n=$(( n + 1 ))
+    done
+}
+
+# Spread the stage-out of jobs that finish at the same moment.
+sleep $(( RANDOM % 60 ))
+
+retry xrdfs "${SE_HOST}" mkdir -p "${SE_DEST_DIR}"
 
 
 # ============================================================
@@ -424,7 +444,7 @@ echo "============================================================"
 echo "=== [STAGE-OUT] ============================================="
 echo "============================================================"
 
-xrdcp -f "${LOCAL_OUTPUT}" "${SE_DEST_URL}"
+retry xrdcp -f "${LOCAL_OUTPUT}" "${SE_DEST_URL}"
 
 
 # ============================================================
@@ -436,7 +456,7 @@ echo "============================================================"
 echo "=== [STAGE-OUT CHECK] ======================================="
 echo "============================================================"
 
-xrdfs "${SE_HOST}" stat "${SE_DEST_PATH}"
+retry xrdfs "${SE_HOST}" stat "${SE_DEST_PATH}"
 
 
 # ============================================================
