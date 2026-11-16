@@ -17,7 +17,14 @@
 //
 // step0 = every gen dilepton event that reaches the job (after the gen
 // channel split), step7 = after the full dilepton selection incl. >=1 b-tag
-// (same objects that are handed to the solver). Binning is identical to the
+// (same objects that are handed to the solver). "step7" is the historical
+// (DESY) name and is kept because the solver reads it by name.
+//
+// In addition, the same reco-gen quantities (and the gen mbl / W mass of the
+// selected events) are stored for every selection stage as
+// KinRecoStage<N>_* with N = selectionIndex(SelectionStage):
+//   1 dilepton cuts, 2 Z veto, 3 N_jet, 4 MET, 5 >=1 b-tag (= step7 inputs),
+//   8 events with a KinReco solution. Binning is identical to the
 // old KinSolv/Kin_input.root so the solver code needs no changes.
 //
 // Filled with weight 1 for every entry (no gen-weight sign, no SFs), same as
@@ -29,6 +36,9 @@
 #include <TH1D.h>
 #include <TH2D.h>
 #include <vector>
+#include <utility>
+
+class TDirectory;
 
 class NanoAODBranchReader;
 
@@ -51,9 +61,15 @@ public:
     static GenTtbar FindGenTtbar(const NanoAODBranchReader& reader);
 
     void FillGen(const GenTtbar& gen, double w);
+    // stage = selectionIndex(SelectionStage) at which this is called.
+    // Every stage fills its own KinRecoStage<N>_* copies (diagnostics); the
+    // solver histograms (*_step7) are filled only at kSolverStage
+    // (after >=1 b-tag, i.e. the objects handed to the solver).
     void FillReco(const GenTtbar& gen,
                   const TLorentzVector& recoLep, const TLorentzVector& recoAnLep,
-                  const std::vector<TLorentzVector>& jets, double w);
+                  const std::vector<TLorentzVector>& jets, double w, int stage);
+
+    static constexpr int kSolverStage = 5;   // SelectionStage::AfterBTagMultiplicity
 
     void PrintSummary() const;
 
@@ -61,6 +77,7 @@ public:
     static constexpr double kJetMatchDR = 0.4;
 
 private:
+    TDirectory* dir_;   // output directory (job's fout)
     TH1D* h_wmass_;
     TH1D* h_mbl_;
     TH1D* h_fE_lep_;
@@ -73,6 +90,13 @@ private:
     TH1D* h_dR_lep_;
     TH1D* h_dR_jet_;
     TH1D* h_count_;   // bookkeeping, see bin labels
+
+    // per-selection-stage copies (diagnostics, not read by the solver)
+    struct StageHists {
+        TH1D *fE_lep, *angle_lep, *fE_jet, *angle_jet, *mbl, *wmass, *nmatch;
+    };
+    StageHists& Stage(int stage);
+    std::vector<std::pair<int, StageHists>> stages_;
 
     long nGenAll_ = 0, nGenComplete_ = 0, nReco_ = 0, nRecoLepMatch_ = 0, nRecoJetMatch_ = 0;
 };

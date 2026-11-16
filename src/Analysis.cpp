@@ -853,6 +853,14 @@ void Analysis::Loop() {
         // reco selection. Every entry is filled with weight 1 (no gen-weight
         // sign, no SFs), same as the original Kin_input.root.
         const double kinRecoInputWeight = 1.;
+        // Reco-gen resolution templates at a given selection stage. Stage 5
+        // (>=1 b-tag) also fills the solver inputs (*_step7), from the same
+        // leptons/jets that are handed to the solver.
+        auto fillKinRecoInput = [&](SelectionStage st) {
+            if (kinRecoInputMaker_)
+                kinRecoInputMaker_->FillReco(genTtbar_, Lep, AnLep, jets, kinRecoInputWeight,
+                                             static_cast<int>(selectionIndex(st)));
+        };
         if (kinRecoInputMaker_) {
             genTtbar_ = KinRecoInputMaker::FindGenTtbar(branchReader_);
             kinRecoInputMaker_->FillGen(genTtbar_, kinRecoInputWeight);
@@ -915,27 +923,29 @@ void Analysis::Loop() {
         // Stage 1: no jets, no b-jets (h_Num_bJets was already commented
         // out here before this consolidation - left out on purpose).
         FillControlPlots(SelectionStage::AfterDileptonCuts, /*includeJets=*/false, /*includeBJets=*/false);
+        fillKinRecoInput(SelectionStage::AfterDileptonCuts);
 
         if (ZVetoCut() == false) {traceCutFail("ZVetoCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterZVeto, /*includeJets=*/false, /*includeBJets=*/false);
+        fillKinRecoInput(SelectionStage::AfterZVeto);
 
         if (NumJetCut(v_jet_idx) == false) {traceCutFail("NumJetCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterJetMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
+        fillKinRecoInput(SelectionStage::AfterJetMultiplicity);
 
         if (METCut(Met) == false) {traceCutFail("METCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterMETCut, /*includeJets=*/true, /*includeBJets=*/false);
+        fillKinRecoInput(SelectionStage::AfterMETCut);
 
         BTaggingSFApply();
 
         if (NumbJetCut(v_bjet_idx) == false) {traceCutFail("NumbJetCut"); continue;}
 
         FillControlPlots(SelectionStage::AfterBTagMultiplicity, /*includeJets=*/true, /*includeBJets=*/false);
-        // KinReco input production: reco-gen resolution (step7) templates,
-        // from the same leptons/jets that are handed to the solver below.
-        if (kinRecoInputMaker_) kinRecoInputMaker_->FillReco(genTtbar_, Lep, AnLep, jets, kinRecoInputWeight);
+        fillKinRecoInput(SelectionStage::AfterBTagMultiplicity);
         SetUpKINObs();
         if (!isKinSol) {
             traceCutFail("KinSolv (no solution)");
@@ -949,6 +959,7 @@ void Analysis::Loop() {
             }
             //FillHisto( h_HT[selectionIndex(SelectionStage::AfterTopReconstruction)]     , AllJetpt   , evt_weight_);
             FillControlPlots(SelectionStage::AfterTopReconstruction, /*includeJets=*/true, /*includeBJets=*/true);
+            fillKinRecoInput(SelectionStage::AfterTopReconstruction);
             if ( Top.Pt() > AnTop.Pt() ) { Top1 = Top; Top2 = AnTop; }
             else { Top1 = AnTop; Top2 = Top; }
             

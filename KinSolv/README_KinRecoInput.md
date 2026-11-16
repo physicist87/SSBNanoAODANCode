@@ -29,5 +29,10 @@ Every entry is filled with weight 1 (no gen-weight sign, no SFs), same as the or
 4. Set `MakeKinRecoInput : "False"` again and enable
    `KinRecoInputFile : "./KinSolv/KinReco_input_UL2018.root"` in all configs of that era (MC and data).
 
+Also stored (diagnostics, not read by the solver): the same reco-gen quantities and the gen mbl / W mass
+of the selected events at every selection stage, as `KinRecoStage<N>_{fE_lep,d_angle_lep,fE_jet,d_angle_jet,mbl_true,W_mass,count}`
+with N = selection stage index: 1 dilepton cuts, 2 Z veto, 3 N_jet, 4 MET, 5 >= 1 b-tag (identical to the `*_step7`
+solver inputs), 8 events with a KinReco solution. `step7` is the historical (DESY) name, kept because the solver reads it.
+
 Check `KinRecoDiag_count` (matching efficiencies) and `KinRecoDiag_fE_*_vs_pt_step7` before using a new file.
 After switching, the KinReco data/MC scale factors need to be re-derived.

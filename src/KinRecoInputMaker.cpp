@@ -1,6 +1,9 @@
 #include "../interface/KinRecoInputMaker.h"
 #include "../interface/NanoAODBranchReader.h"
 
+#include <TDirectory.h>
+#include <TString.h>
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -17,6 +20,7 @@ inline bool flag(Long64_t flags, int bit) { return (flags >> bit) & 1; }
 }
 
 KinRecoInputMaker::KinRecoInputMaker()
+    : dir_(gDirectory)
 {
     // --- read by KinematicReconstruction::loadData() (same binning as the old Kin_input.root)
     h_wmass_     = new TH1D("KinReco_W_mass_step0",      "gen W mass;m_{W} [GeV]",                250, 30.0, 130.0);
@@ -39,6 +43,33 @@ KinRecoInputMaker::KinRecoInputMaker()
     for (TH1* h : std::initializer_list<TH1*>{h_wmass_, h_mbl_, h_angle_jet_, h_angle_lep_, h_fE_jet_, h_fE_lep_,
                                                h_fE_jet_vs_pt_, h_fE_lep_vs_pt_, h_dR_lep_, h_dR_jet_})
         h->Sumw2();
+
+    // Book the per-stage copies up front so every output file has the same
+    // set of histograms (1 dilepton, 2 Z veto, 3 N_jet, 4 MET, 5 b-tag, 8 KinReco solution).
+    for (int st : {1, 2, 3, 4, 5, 8}) Stage(st);
+}
+
+KinRecoInputMaker::StageHists& KinRecoInputMaker::Stage(int stage)
+{
+    for (auto& p : stages_) if (p.first == stage) return p.second;
+    // Normally all booked in the constructor; the lookup books on demand otherwise.
+    TDirectory* old = gDirectory;
+    if (dir_) dir_->cd();
+    const TString n = TString::Format("KinRecoStage%d_", stage);
+    StageHists h;
+    h.fE_lep    = new TH1D(n + "fE_lep",    Form("stage %d;E_{gen}/E_{reco}", stage),        200, 0.5, 2.5);
+    h.angle_lep = new TH1D(n + "d_angle_lep", Form("stage %d;#alpha(reco lep, gen lep)", stage), 200, 0.0, 0.2);
+    h.fE_jet    = new TH1D(n + "fE_jet",    Form("stage %d;E_{b}/E_{jet}", stage),           100, 0.0, 4.0);
+    h.angle_jet = new TH1D(n + "d_angle_jet", Form("stage %d;#alpha(jet, b quark)", stage),   200, 0.0, 0.5);
+    h.mbl       = new TH1D(n + "mbl_true",  Form("stage %d;m_{lb}^{gen} [GeV]", stage),      100, 0.0, 180.0);
+    h.wmass     = new TH1D(n + "W_mass",    Form("stage %d;m_{W}^{gen} [GeV]", stage),       250, 30.0, 130.0);
+    h.nmatch    = new TH1D(n + "count",     Form("stage %d bookkeeping", stage), 6, 0, 6);
+    const char* labels[6] = {"evts", "gen complete", "lep matched", "anlep matched", "b matched", "bbar matched"};
+    for (int i = 0; i < 6; ++i) h.nmatch->GetXaxis()->SetBinLabel(i + 1, labels[i]);
+    for (TH1* x : std::initializer_list<TH1*>{h.fE_lep, h.angle_lep, h.fE_jet, h.angle_jet, h.mbl, h.wmass}) x->Sumw2();
+    if (old) old->cd();
+    stages_.emplace_back(stage, h);
+    return stages_.back().second;
 }
 
 KinRecoInputMaker::GenTtbar KinRecoInputMaker::FindGenTtbar(const NanoAODBranchReader& reader)
@@ -125,26 +156,42 @@ void KinRecoInputMaker::FillGen(const GenTtbar& gen, double w)
 
 void KinRecoInputMaker::FillReco(const GenTtbar& gen,
                                  const TLorentzVector& recoLep, const TLorentzVector& recoAnLep,
-                                 const std::vector<TLorentzVector>& jets, double w)
+                                 const std::vector<TLorentzVector>& jets, double w, int stage)
 {
-    ++nReco_;
-    h_count_->Fill(3);
+    const bool solver = (stage == kSolverStage);
+    StageHists& sh = Stage(stage);
+    sh.nmatch->Fill(0);
+    if (gen.hasWplus)  sh.wmass->Fill(gen.wPlus.M(),  w);
+    if (gen.hasWminus) sh.wmass->Fill(gen.wMinus.M(), w);
+    if (gen.Complete()) {
+        sh.nmatch->Fill(1);
+        sh.mbl->Fill((gen.anLep + gen.b).M(),  w);
+        sh.mbl->Fill((gen.lep + gen.bbar).M(), w);
+    }
+    if (solver) { ++nReco_; h_count_->Fill(3); }
 
     // ---- leptons: charge-ordered reco lepton vs same-charge gen lepton
     auto fillLep = [&](const TLorentzVector& reco, const TLorentzVector& genl, int bin) {
         if (reco.E() <= 0) return false;
         const double dR = reco.DeltaR(genl);
-        h_dR_lep_->Fill(dR, w);
+        if (solver) h_dR_lep_->Fill(dR, w);
         if (dR >= kLepMatchDR) return false;
-        h_fE_lep_->Fill(genl.E() / reco.E(), w);
-        h_angle_lep_->Fill(reco.Angle(genl.Vect()), w);
-        h_fE_lep_vs_pt_->Fill(reco.Pt(), genl.E() / reco.E(), w);
-        h_count_->Fill(bin);
+        const double fE = genl.E() / reco.E();
+        const double ang = reco.Angle(genl.Vect());
+        sh.fE_lep->Fill(fE, w);
+        sh.angle_lep->Fill(ang, w);
+        sh.nmatch->Fill(bin - 2);
+        if (solver) {
+            h_fE_lep_->Fill(fE, w);
+            h_angle_lep_->Fill(ang, w);
+            h_fE_lep_vs_pt_->Fill(reco.Pt(), fE, w);
+            h_count_->Fill(bin);
+        }
         return true;
     };
     bool okL = gen.hasLep   && fillLep(recoLep,   gen.lep,   4);
     bool okA = gen.hasAnLep && fillLep(recoAnLep, gen.anLep, 5);
-    if (okL && okA) ++nRecoLepMatch_;
+    if (solver && okL && okA) ++nRecoLepMatch_;
 
     // ---- jets: closest selected jet to each top b quark, dR<0.4, and the two
     // b quarks must not pick the same jet.
@@ -159,21 +206,28 @@ void KinRecoInputMaker::FillReco(const GenTtbar& gen,
     double dRb = 999., dRbb = 999.;
     int jb  = gen.hasB    ? closest(gen.b,    dRb)  : -1;
     int jbb = gen.hasBbar ? closest(gen.bbar, dRbb) : -1;
-    if (jb  >= 0) h_dR_jet_->Fill(dRb,  w);
-    if (jbb >= 0) h_dR_jet_->Fill(dRbb, w);
+    if (solver && jb  >= 0) h_dR_jet_->Fill(dRb,  w);
+    if (solver && jbb >= 0) h_dR_jet_->Fill(dRbb, w);
     if (jb >= 0 && jb == jbb) return;     // ambiguous, skip both
     int nJetMatched = 0;
     auto fillJet = [&](int j, double dR, const TLorentzVector& q, int bin) {
         if (j < 0 || dR >= kJetMatchDR || jets[j].E() <= 0) return;
-        h_fE_jet_->Fill(q.E() / jets[j].E(), w);
-        h_angle_jet_->Fill(jets[j].Angle(q.Vect()), w);
-        h_fE_jet_vs_pt_->Fill(jets[j].Pt(), q.E() / jets[j].E(), w);
-        h_count_->Fill(bin);
+        const double fE = q.E() / jets[j].E();
+        const double ang = jets[j].Angle(q.Vect());
+        sh.fE_jet->Fill(fE, w);
+        sh.angle_jet->Fill(ang, w);
+        sh.nmatch->Fill(bin - 2);
+        if (solver) {
+            h_fE_jet_->Fill(fE, w);
+            h_angle_jet_->Fill(ang, w);
+            h_fE_jet_vs_pt_->Fill(jets[j].Pt(), fE, w);
+            h_count_->Fill(bin);
+        }
         ++nJetMatched;
     };
     fillJet(jb,  dRb,  gen.b,    6);
     fillJet(jbb, dRbb, gen.bbar, 7);
-    if (nJetMatched == 2) ++nRecoJetMatch_;
+    if (solver && nJetMatched == 2) ++nRecoJetMatch_;
 }
 
 void KinRecoInputMaker::PrintSummary() const

@@ -42,10 +42,16 @@ def main():
     ap.add_argument("--out", required=True, help="output KinReco input file")
     ap.add_argument("--ref", default=None, help="reference input file to compare with (e.g. KinSolv/Kin_input.root)")
     ap.add_argument("--plots", default=None, help="directory for comparison plots (needs --ref)")
-    ap.add_argument("--keep-diag", action="store_true", help="also store the KinRecoDiag_* histograms")
+    ap.add_argument("--keep-diag", action="store_true", help="also store the KinRecoDiag_* and KinRecoStage<N>_* histograms")
     args = ap.parse_args()
 
     names = SOLVER_HISTS + (DIAG_HISTS if args.keep_diag else [])
+    if args.keep_diag:
+        # per-selection-stage copies (KinRecoStage<N>_*), taken from the first file
+        f0 = ROOT.TFile.Open(args.inputs[0])
+        if f0 and not f0.IsZombie():
+            names += sorted(k.GetName() for k in f0.GetListOfKeys() if k.GetName().startswith("KinRecoStage"))
+            f0.Close()
     summed = {}
     nfiles = 0
     for path in args.inputs:
