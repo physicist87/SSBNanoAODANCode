@@ -113,7 +113,16 @@ int main(int argc, char **argv)
        ch->Add(filename, 0);
     }
     fclose(filelist);
-    logger.Info() << "Total number of events after merging root files: " << ch->GetEntries() << std::endl;
+    const Long64_t nTotalEntries = ch->GetEntries();
+    logger.Info() << "Total number of events after merging root files: " << nTotalEntries << std::endl;
+    // Fail fast if no input could be read (e.g. xrootd "Operation expired"):
+    // otherwise the job continues on an empty chain and dies later with a
+    // misleading "Missing required NanoAOD branch(es)" error.
+    if (nTotalEntries <= 0) {
+        logger.Error() << "No readable events in input chain (" << ch->GetListOfFiles()->GetEntries()
+                       << " file(s) listed). Input files could not be opened or are empty - aborting." << std::endl;
+        return 3;
+    }
     // Reset the chain back to the first file/entry so the TTreeReader that
     // Analysis attaches next starts from a clean, agreed-upon state instead
     // of wherever GetEntries() above last landed.
