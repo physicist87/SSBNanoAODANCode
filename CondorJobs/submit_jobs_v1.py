@@ -173,29 +173,40 @@ def create_package_tarball():
 
         TARBALL_PATH.unlink()
 
+    # Tar the directory this script actually lives in (it may be a copy such
+    # as SSBNanoAODANCode_KinRecoInput), but store it as PACKAGE_NAME inside
+    # the tarball, because run_condor_v1.sh unpacks and cd's into
+    # SSBNanoAODANCode. Previously the tarball was always made from
+    # ../SSBNanoAODANCode, so a job submitted from a copy silently ran the
+    # code of the original directory.
+    src = PACKAGE_DIR.name
+
     cmd = [
         "tar",
         "-czf",
         str(TARBALL_PATH),
 
         # Local/runtime directories not needed on worker
-        f"--exclude={PACKAGE_NAME}/input",
-        f"--exclude={PACKAGE_NAME}/output",
-        f"--exclude={PACKAGE_NAME}/CondorJobs",
+        f"--exclude={src}/input",
+        f"--exclude={src}/output",
+        f"--exclude={src}/CondorJobs",
 
         # Git
-        f"--exclude={PACKAGE_NAME}/.git",
+        f"--exclude={src}/.git",
 
         # Local build products
-        f"--exclude={PACKAGE_NAME}/*.o",
-        f"--exclude={PACKAGE_NAME}/ssb_analysis",
+        f"--exclude={src}/*.o",
+        f"--exclude={src}/ssb_analysis",
 
         # Temporary files
-        f"--exclude={PACKAGE_NAME}/.DS_Store",
-        f"--exclude={PACKAGE_NAME}/__pycache__",
-        f"--exclude={PACKAGE_NAME}/*.pyc",
+        f"--exclude={src}/.DS_Store",
+        f"--exclude=__pycache__",
+        f"--exclude=*.pyc",
 
-        PACKAGE_NAME,
+        # Rename the top directory to PACKAGE_NAME inside the tarball
+        f"--transform=s,^{re.escape(src)},{PACKAGE_NAME},",
+
+        src,
     ]
 
     print(
