@@ -20,9 +20,10 @@
 // (same objects that are handed to the solver). Binning is identical to the
 // old KinSolv/Kin_input.root so the solver code needs no changes.
 //
-// Filled with the sign of Generator_weight only (unit weights), so the bin
-// contents stay raw-count-like - the solver uses h_mbl bin contents directly
-// as a weight (/1e8), and resolution shapes do not need SFs.
+// Filled with weight 1 for every entry (no gen-weight sign, no SFs), same as
+// the original Kin_input.root (integer bin contents, Sumw2 == contents). The
+// solver uses h_mbl bin contents directly as a weight (/1e8), and the
+// resolution templates only need shapes.
 
 #include <TLorentzVector.h>
 #include <TH1D.h>

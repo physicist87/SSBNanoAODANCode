@@ -14,7 +14,7 @@
 
 step0 means every gen event of the channel, before any reco cut. step7 means after the full dilepton
 selection with >= 1 b-tag, using the same `Lep`/`AnLep`/`jets` that go into the solver.
-The histograms are filled with sign(Generator_weight) only. Binning is the same as in the old file.
+Every entry is filled with weight 1 (no gen-weight sign, no SFs), same as the original `Kin_input.root`. Binning is the same as in the old file.
 
 ## Producing them
 

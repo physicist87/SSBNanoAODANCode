@@ -2,8 +2,8 @@
 """Build a KinReco input file from ssb_analysis outputs made with MakeKinRecoInput : "True".
 
 Sums the KinReco_* histograms over all given files (e.g. the TTbar_Signal outputs of
-the dielec / dimuon / muelec jobs of one era), clips negative bins to 0 (TH1::GetRandom
-needs non-negative contents) and writes them with the names KinematicReconstruction::
+the dielec / dimuon / muelec jobs of one era), clips negative bins to 0 as a safety net
+(TH1::GetRandom needs non-negative contents; with unit weights there are none) and writes them with the names KinematicReconstruction::
 loadData() expects. Optionally draws a shape comparison against a reference file.
 
   python3 KinSolv/make_kinreco_input.py --out KinSolv/KinReco_input_UL2018.root \

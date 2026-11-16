@@ -850,10 +850,10 @@ void Analysis::Loop() {
         L1PreFireApply();
 
         // KinReco input production: gen-level (step0) templates, before any
-        // reco selection. Unit weight x sign(Generator_weight).
-        double kinRecoInputWeight = 1.;
+        // reco selection. Every entry is filled with weight 1 (no gen-weight
+        // sign, no SFs), same as the original Kin_input.root.
+        const double kinRecoInputWeight = 1.;
         if (kinRecoInputMaker_) {
-            kinRecoInputWeight = (branchReader_.RequiredFloatValue("Generator_weight") < 0.) ? -1. : 1.;
             genTtbar_ = KinRecoInputMaker::FindGenTtbar(branchReader_);
             kinRecoInputMaker_->FillGen(genTtbar_, kinRecoInputWeight);
         }
